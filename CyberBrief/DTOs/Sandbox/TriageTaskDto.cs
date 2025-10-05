@@ -1,4 +1,4 @@
-﻿namespace CyberBrief.Models.Sandbox
+﻿namespace CyberBrief.Dtos.Sandbox
 {
     public class TriageTaskDto
     {

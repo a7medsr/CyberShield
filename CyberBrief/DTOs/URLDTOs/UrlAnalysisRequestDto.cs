@@ -1,4 +1,4 @@
-﻿namespace CyberBrief.Models.URLModels
+﻿namespace CyberBrief.Dtos.URLModels
 {
     public class UrlAnalysisRequestDto
     {

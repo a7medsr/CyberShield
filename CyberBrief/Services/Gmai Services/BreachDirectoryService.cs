@@ -1,4 +1,4 @@
-﻿using CyberBrief.Models.Gmail;
+﻿using CyberBrief.Dtos.Gmail;
 using Newtonsoft.Json;
 namespace CyberBrief.Services
 {

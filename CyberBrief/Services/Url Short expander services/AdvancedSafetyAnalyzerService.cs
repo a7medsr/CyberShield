@@ -1,5 +1,5 @@
 ﻿using CyberBrief.Models;
-using CyberBrief.Models.URLModels;
+using CyberBrief.Dtos.URLModels;
 using CyberBrief.Services.IServices;
 
 namespace CyberBrief.Services

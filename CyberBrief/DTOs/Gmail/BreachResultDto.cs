@@ -1,4 +1,4 @@
-﻿namespace CyberBrief.Models.Gmail
+﻿namespace CyberBrief.Dtos.Gmail
 {
     public class BreachResultDto
     {

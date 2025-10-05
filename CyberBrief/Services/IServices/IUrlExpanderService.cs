@@ -1,4 +1,4 @@
-﻿using CyberBrief.Models.URLModels;
+﻿using CyberBrief.Dtos.URLModels;
 
 namespace CyberBrief.Services.IServices
 {
