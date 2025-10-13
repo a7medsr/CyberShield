@@ -9,7 +9,7 @@ namespace CyberBrief.Controllers
     public class TriageController : ControllerBase
     {
         private readonly TriageService _triageService;
-
+        
         public TriageController(TriageService triageService)
         {
             _triageService = triageService;
@@ -17,7 +17,7 @@ namespace CyberBrief.Controllers
 
         // POST: api/triage/url
         [HttpPost("url")]
-        public async Task<IActionResult> SubmitUrl([FromBody] string url)
+        public async Task<IActionResult> SubmitUrl(string url)
         {
             if (string.IsNullOrWhiteSpace(url))
                 return BadRequest("URL is required");
