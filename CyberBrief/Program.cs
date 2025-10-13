@@ -6,6 +6,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Headers;
 using System.Text;
 using CyberBrief.Services;
+using Scalar.AspNetCore;
+
 namespace CyberBrief
 {
     public class Program
@@ -51,7 +53,7 @@ namespace CyberBrief
 
                 return new BreachDirectoryService(
                     httpClient,
-                    "ea341872bamsh9ab727ff6d57f59p14b35bjsn24dfacd04bb7"
+                    "cd849227fcmsha0865829942a226p196270jsnd1890868e127"
                 );
             });
 
@@ -80,11 +82,18 @@ namespace CyberBrief
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
-            if (app.Environment.IsDevelopment())
+            // if (app.Environment.IsDevelopment())
+            // {
+            //     app.UseSwagger();
+            //     app.UseSwaggerUI();
+            // }
+            app.UseSwagger(opt => opt.RouteTemplate = "openapi/{documentName}.json");
+            app.MapScalarApiReference(opt =>
             {
-                app.UseSwagger();
-                app.UseSwaggerUI();
-            }
+                opt.Title = "AutoGrad API Documentation";
+                opt.Theme = ScalarTheme.Default;
+                opt.DefaultHttpClient = new(ScalarTarget.Http, ScalarClient.Http11);
+            });
 
             app.UseHttpsRedirection();
 
