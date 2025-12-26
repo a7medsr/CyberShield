@@ -60,6 +60,7 @@ namespace CyberBrief
             // inside Main or builder setup
             builder.Services.AddHttpClient<PasswordInspectorService>();
             builder.Services.AddScoped<PasswordInspectorService>();
+            builder.Services.AddScoped<ContainerServices>();
 
 
             #endregion

@@ -22,15 +22,18 @@ namespace CyberBrief.Services
                     Total = raw.Summary.Counts.Total
                 },
                 Vulnerabilities = raw.Vulnerabilities
-                    .Select(v => new VulnerabilityDto
-                    {
-                        Package = v.Package,
-                        Vulnerability = v.Vulnerability,
-                        Severity = v.Severity,
-                        Source = v.Source
-                    })
-                    .ToList()
-            };
+                .GroupBy(v => new { v.Vulnerability })
+                .Select(g => g.First())
+                .Select(v => new VulnerabilityDto
+                {
+                    Package = v.Package,
+                    Vulnerability = v.Vulnerability,
+                    Severity = v.Severity,
+                    Source = v.Source
+                })
+                .ToList()
+
+                        };
         }
 
     }
