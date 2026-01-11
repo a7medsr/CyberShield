@@ -1,12 +1,14 @@
+using CyberBrief.Context;
+using CyberBrief.Services;
 using CyberBrief.Services;
 using CyberBrief.Services.IServices;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Options;
+using Scalar.AspNetCore;
 using System.Net.Http.Headers;
 using System.Net.Http.Headers;
 using System.Text;
-using CyberBrief.Services;
-using Scalar.AspNetCore;
 
 namespace CyberBrief
 {
@@ -74,6 +76,10 @@ namespace CyberBrief
                 return new TriageService(httpClient, config);
             });
             #endregion
+
+
+            builder.Services.AddDbContext<CyberBriefDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
+
 
             builder.Services.AddControllers();
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

@@ -1,7 +1,6 @@
 public class Summary
 {
     public string Id { get; set; }
-    public Image Image { get; set; }
     public string ImageId { get; set; }
     
     public string StartedAt { get; set; }

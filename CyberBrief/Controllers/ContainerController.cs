@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using CyberBrief.Services;
+using CyberBrief.Context;
 namespace CyberBrief.Controllers
 {
     [Route("api/[controller]")]
@@ -10,44 +11,19 @@ namespace CyberBrief.Controllers
     public class ContainerController : ControllerBase
     {
         private readonly ContainerServices _containerServices;
-        public ContainerController(ContainerServices containerServices)
+        private readonly CyberBriefDbContext _context;
+        public ContainerController(ContainerServices containerServices, CyberBriefDbContext context)
         {
             _containerServices = containerServices;
+            _context = context;
+
         }
 
         [HttpPost("scan-image")]
-        public async Task<IActionResult> ScanImage(string name, string scanId)
+        public async Task<IActionResult> ScanImage(string name)
         {
-            string safeName = name.Replace("/", "%");
-            var url =
-                $"https://containerscanner.tecisfun.cloud//api/image/{safeName}/scan/{scanId}/json-report";
 
-            using var httpClient = new HttpClient();
-
-            var response = await httpClient.GetAsync(url);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return StatusCode(
-                    (int)response.StatusCode,
-                    "Failed to fetch scan report"
-                );
-            }
-
-            var jsonString = await response.Content.ReadAsStringAsync();
-
-            var raw = JsonSerializer.Deserialize<RawScanResponse>(
-                jsonString,
-                new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }
-            );
-
-            if (raw == null)
-                return BadRequest("Invalid scan response");
-
-            ScanResultDto resultDto = _containerServices.MapToDto(raw);
+            ScanResultDto resultDto =await _containerServices.GetSummaryAsync(name);
 
             return Ok(resultDto);
         }
@@ -55,11 +31,16 @@ namespace CyberBrief.Controllers
         public async Task<IActionResult> StartScan([FromBody] imgforscan img)
         {
             var result = await _containerServices.StratScanAsync(img);
-            if (result.StartsWith("Error:"))
-            {
-                return BadRequest(result);
-            }
+          
             return Ok(result);
+        }
+        [HttpGet("status")]
+        public async Task<Status> status(string imgname)
+        {
+
+            var result = await _containerServices.GetStatusAsync(imgname);
+            
+            return result;
         }
     }
 }
