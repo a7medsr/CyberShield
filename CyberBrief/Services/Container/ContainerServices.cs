@@ -16,64 +16,59 @@ namespace CyberBrief.Services
             _context = context;
         }
 
-        public ScanResultDto MapToDto(ScanResultDto raw)
+        public async Task<ScanResultDto> GetSummaryAsync(string name)
         {
-            if (raw == null)
+            string safeName = name.Replace("/", "%");
+
+            string scanId = _context.Images
+                .Where(x => x.Name == name)
+                .Select(x => x.scanId)
+                .FirstOrDefault();
+
+            if (string.IsNullOrEmpty(scanId))
+                return null;
+
+            var url = $"https://containerscanner.tecisfun.cloud/api/image/{safeName}/scan/{scanId}/json-report";
+
+            using var httpClient = new HttpClient();
+            var response = await httpClient.GetAsync(url);
+
+            response.EnsureSuccessStatusCode();
+
+            var jsonString = await response.Content.ReadAsStringAsync();
+
+            var apiResponse = JsonSerializer.Deserialize<ScanApiResponse>(
+                jsonString,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            );
+
+            if (apiResponse == null || apiResponse.Summary == null)
                 return null;
 
             return new ScanResultDto
             {
-                Id = raw.Id,
-                Name = raw.Name,
-                Tag = raw.Tag,
-                StartedAt = raw.StartedAt,
-                FinishedAt = raw.FinishedAt,
+                Id = apiResponse.Summary.Id,
+                Name = apiResponse.Summary.Image.Name,
+                Tag = apiResponse.Summary.Image.Tag,
+                StartedAt = apiResponse.Summary.StartedAt,
+                FinishedAt = apiResponse.Summary.FinishedAt,
 
-                Critical = raw.Critical,
-                High = raw.High,
-                Medium = raw.Medium,
-                Low = raw.Low,
-                Total = raw.Total,
+                Critical = apiResponse.Summary.Counts.Critical,
+                High = apiResponse.Summary.Counts.High,
+                Medium = apiResponse.Summary.Counts.Medium,
+                Low = apiResponse.Summary.Counts.Low,
+                Total = apiResponse.Summary.Counts.Total,
 
-                Vulnerabilities = raw.Vulnerabilities?
+                Vulnerabilities = apiResponse.Vulnerabilities?
                     .GroupBy(v => new { v.Package, v.Vulnerability })
                     .Select(g => g.First())
-                    .Select(v => new RawVulnerability
-                    {
-                        Package = v.Package,
-                        Vulnerability = v.Vulnerability,
-                        Severity = v.Severity,
-                        Source = v.Source
-                    })
                     .ToList() ?? new List<RawVulnerability>()
             };
         }
 
 
-        public async Task<ScanResultDto> GetSummaryAsync(string name)
-        {
-            var exstingsummary = _context.Images.Where(x => x.Name == name).Select(x => x.SummaryId).FirstOrDefault();
-            if(exstingsummary == null)
-            {
-               // return await _context.Summarys.Where(x => x.Id == exstingsummary).FirstOrDefaultAsync();
-            }
-            string safeName = name.Replace("/", "%");
-            string scanId = _context.Images.Where(x => x.Name == name).Select(x => x.scanId).FirstOrDefault();
-            var url = $"https://containerscanner.tecisfun.cloud//api/image/{safeName}/scan/{scanId}/json-report";
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(url);
-            var jsonString = await response.Content.ReadAsStringAsync();
-            var raw = JsonSerializer.Deserialize<ScanResultDto>(
-                jsonString,
-                new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }
-            );
-            ScanResultDto resultDto = MapToDto(raw);
 
-            return resultDto;
-        }
+       
 
         public async Task<Status> GetStatusAsync(string imgname)
         {

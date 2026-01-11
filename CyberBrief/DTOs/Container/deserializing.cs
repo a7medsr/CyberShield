@@ -22,6 +22,37 @@ namespace CyberBrief.DTOs.Container
         public int Total { get; set; }
         public List<RawVulnerability> Vulnerabilities { get; set; }
     }
+    public class ScanApiResponse
+    {
+        public SummaryDto Summary { get; set; }
+        public List<RawVulnerability> Vulnerabilities { get; set; }
+    }
+    public class SummaryDto
+    {
+        public string Id { get; set; }
+        public ImageDto Image { get; set; }
+        public string Status { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime FinishedAt { get; set; }
+        public CountsDto Counts { get; set; }
+    }
+    public class ImageDto
+    {
+        public string Name { get; set; }
+        public string Tag { get; set; }
+        public string Id { get; set; }
+    }
+    public class CountsDto
+    {
+        public int Critical { get; set; }
+        public int High { get; set; }
+        public int Medium { get; set; }
+        public int Low { get; set; }
+        public int Total { get; set; }
+    }
+
+
+
     //public class Summary
     //{
     //    public string Id { get; set; }
