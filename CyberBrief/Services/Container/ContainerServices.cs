@@ -1,5 +1,5 @@
 ﻿using CyberBrief.DTOs.Container;
-
+using System.Net.Http.Json;
 namespace CyberBrief.Services
 {
     public class ContainerServices
@@ -35,6 +35,28 @@ namespace CyberBrief.Services
 
                         };
         }
-
+        
+        public async Task<string> StratScanAsync(imgforscan img)
+        {
+            using HttpClient client = new HttpClient();
+            string url ="https://containerscanner.tecisfun.cloud//api//scans/start";   
+            var scanRequest = new ScanRequest(
+                img.image,
+                img.tag ?? "latest",
+                img.Source ?? "registry",
+                img.dockerImageId ?? string.Empty,
+                img.repositoryId ?? string.Empty
+            );
+            try
+            {
+                HttpResponseMessage respone= await client.PostAsJsonAsync(url, scanRequest);
+                respone.EnsureSuccessStatusCode();
+                string responseBody = await respone.Content.ReadAsStringAsync();
+                return responseBody;
+            }catch(HttpRequestException e)
+            {
+                return $"Error: {e.Message}";
+            }
+        }
     }
 }

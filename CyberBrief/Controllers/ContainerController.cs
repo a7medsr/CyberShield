@@ -16,12 +16,11 @@ namespace CyberBrief.Controllers
         }
 
         [HttpPost("scan-image")]
-        public async Task<IActionResult> ScanImage(
-    [FromQuery] string name,
-    [FromQuery] string scanId)
+        public async Task<IActionResult> ScanImage(string name, string scanId)
         {
+            string safeName = name.Replace("/", "%");
             var url =
-                $"https://scannv4.proudforest-e230a1a0.francecentral.azurecontainerapps.io/api/image/{name}/scan/{scanId}/json-report";
+                $"https://containerscanner.tecisfun.cloud//api/image/{safeName}/scan/{scanId}/json-report";
 
             using var httpClient = new HttpClient();
 
@@ -52,6 +51,15 @@ namespace CyberBrief.Controllers
 
             return Ok(resultDto);
         }
-
+        [HttpPost("start-scan")]
+        public async Task<IActionResult> StartScan([FromBody] imgforscan img)
+        {
+            var result = await _containerServices.StratScanAsync(img);
+            if (result.StartsWith("Error:"))
+            {
+                return BadRequest(result);
+            }
+            return Ok(result);
+        }
     }
 }
