@@ -19,14 +19,14 @@ namespace CyberBrief.Controllers
 
         }
 
-        [HttpPost("scan-image")]
-        public async Task<IActionResult> ScanImage(string name)
-        {
+        //[HttpPost("scan-image")]
+        //public async Task<IActionResult> ScanImage(string name)
+        //{
 
-            ScanResultDto resultDto =await _containerServices.GetSummaryAsync(name);
+        //    ScanResultDto resultDto =await _containerServices.GetSummaryAsync(name);
 
-            return Ok(resultDto);
-        }
+        //    return Ok(resultDto);
+        //}
         [HttpPost("start-scan")]
         public async Task<IActionResult> StartScan([FromBody] imgforscan img)
         {

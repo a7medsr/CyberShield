@@ -16,17 +16,19 @@ namespace CyberBrief.Services
             _context = context;
         }
 
-        public async Task<ScanResultDto> GetSummaryAsync(string name)
+        public async Task<ScanResultDto> GetSummaryAsync(string name,string scanId)
         {
             string safeName = name.Replace("/", "%");
 
-            string scanId = _context.Images
-                .Where(x => x.Name == name)
-                .Select(x => x.scanId)
-                .FirstOrDefault();
+            //string scanId = _context.Images.Where(x => x.Name == name).Select(x => x.scanId).FirstOrDefault();
 
-            if (string.IsNullOrEmpty(scanId))
-                return null;
+            //if (scanId == null) 
+            //{
+            //    throw new Exception("the image dont exest");
+            //}
+
+            //Status status =await GetStatusAsync(name);
+            
 
             var url = $"https://containerscanner.tecisfun.cloud/api/image/{safeName}/scan/{scanId}/json-report";
 
@@ -44,6 +46,7 @@ namespace CyberBrief.Services
 
             if (apiResponse == null || apiResponse.Summary == null)
                 return null;
+
 
             return new ScanResultDto
             {
@@ -85,21 +88,36 @@ namespace CyberBrief.Services
             Status scanStatus = JsonSerializer.Deserialize<Status>(responseBody);
             return scanStatus;
         }
+        private async Task<Status> getstatusbyid(string reqid)
+        {
+           // string? reqid = await _context.Images.Where(x => x.Name == imgname).Select(x => x.requestId).FirstOrDefaultAsync();
+            if (reqid == null) throw new Exception("the image dont exest");
+            using HttpClient client = new HttpClient();
+            string url = $"https://containerscanner.tecisfun.cloud/api/scans/status/{reqid}";
+            var httpClient = new HttpClient();
+
+            HttpResponseMessage response = await httpClient.GetAsync(url);
+
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            Status scanStatus = JsonSerializer.Deserialize<Status>(responseBody);
+            return scanStatus;
+        }
 
 
         public async Task<Image?> StratScanAsync(imgforscan img)
         {
-           
-            Image? exstingimage = await _context.Images.Where(x => x.Name == img.image).FirstOrDefaultAsync();
-            if (exstingimage != null)
-            {
-                return exstingimage;
-            }
+            // 1. Check if image was already scanned
+            Image? existingImage = await _context.Images
+                .Where(x => x.Name == img.image)
+                .FirstOrDefaultAsync();
 
-            
-            using HttpClient client = new HttpClient();
+            if (existingImage != null) return existingImage;
 
-            string url ="https://containerscanner.tecisfun.cloud//api//scans/start";   
+            // 2. Start the scan
+            using HttpClient client = new HttpClient(); // Note: Ideally, use IHttpClientFactory
+            string url = "https://containerscanner.tecisfun.cloud/api/scans/start";
+
             var scanRequest = new ScanRequest(
                 img.image,
                 img.tag ?? "latest",
@@ -107,35 +125,95 @@ namespace CyberBrief.Services
                 img.dockerImageId ?? string.Empty,
                 img.repositoryId ?? string.Empty
             );
-            
-                HttpResponseMessage respone= await client.PostAsJsonAsync(url, scanRequest);
-                
-                respone.EnsureSuccessStatusCode();
-                
-                string responseBody = await respone.Content.ReadAsStringAsync();
-                
-                ScanResponse result = JsonSerializer.Deserialize<ScanResponse>(responseBody);
-                if (result == null || string.IsNullOrEmpty(result.requestId))
-                {
-                    throw new Exception("Failed to parse scan response or requestId is missing.");
-                }
 
-                //Status status =await GetStatusAsync(result.requestId);
-                Image image = new Image
+            HttpResponseMessage response = await client.PostAsJsonAsync(url, scanRequest);
+            response.EnsureSuccessStatusCode();
+
+            string responseBody = await response.Content.ReadAsStringAsync();
+            ScanResponse result = JsonSerializer.Deserialize<ScanResponse>(responseBody);
+
+            if (result == null || string.IsNullOrEmpty(result.requestId))
+            {
+                throw new Exception("Failed to parse scan response or requestId is missing.");
+            }
+
+            // 3. Polling Loop: Check status every 30 seconds
+            Status status = null;
+            bool isCompleted = false;
+            int maxAttempts = 10; // Optional: Stop after 10 minutes (20 * 30s)
+            int attempts = 0;
+
+            while (!isCompleted && attempts < maxAttempts)
+            {
+                status = await getstatusbyid(result.requestId);
+
+                if (status.progress == 100)
+                {
+                    isCompleted = true;
+                }
+                else
+                {
+                    attempts++;
+                    // Wait for 30 seconds before the next check
+                    await Task.Delay(TimeSpan.FromSeconds(30));
+                }
+            }
+
+            if (status?.progress != 100)
+            {
+                throw new Exception("Scan timed out or failed to reach 100%.");
+            }
+            
+            ScanResultDto summarydto=await GetSummaryAsync(scanRequest.image, result.scanId);
+
+           
+
+
+            // 4. Save to Database
+            Image image = new Image
+            {
+                Id = Guid.NewGuid().ToString(),
+                Name = scanRequest.image,
+                Tag = scanRequest.tag,
+                requestId = result.requestId,
+                scanId = result.scanId,
+                Status = status.status,
+                Progres = status.progress
+            };
+            Summary summary = new Summary
+            {
+                Id = Guid.NewGuid().ToString(),
+                ImageId = image.Id,
+                StartedAt=summarydto.StartedAt,
+                FinishedAt=summarydto.FinishedAt,
+                TotalVulnerabilities=summarydto.Total,
+                CriticalVulnerabilities=summarydto.Critical,
+                HighVulnerabilities=summarydto.High,
+                MediumVulnerabilities=summarydto.Medium,
+                LowVulnerabilities=summarydto.Low,
+            };
+            foreach(var vul in summarydto.Vulnerabilities)
+            {
+                Vulnerability vvulnerability = new Vulnerability
                 {
                     Id = Guid.NewGuid().ToString(),
-                    Name = scanRequest.image,
-                    Tag= scanRequest.tag,
-                    requestId=result.requestId,
-                    scanId=result.scanId,
-                  //  Status=status.status,
-                 //   Progres=status.progress
+                    Package = vul.Package,
+                    vulnerability = vul.Vulnerability,
+                    Severity = vul.Severity,
+                    Source = vul.Source,
+                    SummaryId = summary.Id
                 };
+                await _context.Vulnerabilities.AddAsync(vvulnerability);
+            }
+            image.SummaryId = summary.Id;
 
-               await _context.Images.AddAsync(image);
-               _context.SaveChanges();
-                return image;
             
+            await _context.Images.AddAsync(image);
+            await _context.Summarys.AddAsync(summary);
+            await _context.SaveChangesAsync(); // Use Async version for DB saves
+            return image;
         }
+
+
     }
 }

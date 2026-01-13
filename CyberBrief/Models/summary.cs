@@ -3,8 +3,8 @@ public class Summary
     public string Id { get; set; }
     public string ImageId { get; set; }
     
-    public string StartedAt { get; set; }
-    public string FinishedAt { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime FinishedAt { get; set; }
     public int TotalVulnerabilities { get; set; }
     public int CriticalVulnerabilities { get; set; }
     public int HighVulnerabilities { get; set; }
