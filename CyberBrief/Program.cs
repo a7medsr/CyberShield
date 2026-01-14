@@ -85,7 +85,12 @@ namespace CyberBrief
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
-
+            builder.Services.AddHttpClient("ContainerScanner", client =>
+            {
+                client.BaseAddress = new Uri("https://containerscanner.tecisfun.cloud/");
+                client.Timeout = TimeSpan.FromMinutes(2);
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("CyberBrief-App/1.0");
+            });
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
@@ -101,6 +106,7 @@ namespace CyberBrief
                 opt.Theme = ScalarTheme.Default;
                 opt.DefaultHttpClient = new(ScalarTarget.Http, ScalarClient.Http11);
             });
+           
 
             app.UseHttpsRedirection();
 

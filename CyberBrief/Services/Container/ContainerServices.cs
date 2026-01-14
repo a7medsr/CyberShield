@@ -11,14 +11,21 @@ namespace CyberBrief.Services
     public class ContainerServices
     {
         private readonly CyberBriefDbContext _context;
-        public ContainerServices(CyberBriefDbContext context)
+        private readonly HttpClient _httpClient;
+
+        public ContainerServices(CyberBriefDbContext context, IHttpClientFactory factory)
         {
             _context = context;
+            _httpClient = factory.CreateClient("ContainerScanner");
         }
+
+        // Add this where you initialize the client
+
+
 
         public async Task<ScanResultDto> GetSummaryAsync(string name,string scanId)
         {
-            string safeName = name.Replace("/", "%");
+            string safeName = Uri.EscapeDataString(name);
 
             //string scanId = _context.Images.Where(x => x.Name == name).Select(x => x.scanId).FirstOrDefault();
 
@@ -28,12 +35,14 @@ namespace CyberBrief.Services
             //}
 
             //Status status =await GetStatusAsync(name);
-            
 
-            var url = $"https://containerscanner.tecisfun.cloud/api/image/{safeName}/scan/{scanId}/json-report";
 
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(url);
+          //  var url = $"https://containerscanner.tecisfun.cloud/api/image/{safeName}/scan/{scanId}/json-report";
+
+            //using var httpClient = new HttpClient();
+            //httpClient.Timeout = TimeSpan.FromMinutes(5);
+            var response = await _httpClient.GetAsync($"api/image/{safeName}/scan/{scanId}/json-report");
+
 
             response.EnsureSuccessStatusCode();
 
@@ -77,11 +86,10 @@ namespace CyberBrief.Services
         {
             string? reqid =await _context.Images.Where(x => x.Name == imgname).Select(x => x.requestId).FirstOrDefaultAsync();
             if (reqid == null) throw new Exception("the image dont exest");
-            using HttpClient client= new HttpClient();
+            
             string url = $"https://containerscanner.tecisfun.cloud/api/scans/status/{reqid}";
-            var httpClient = new HttpClient();
-
-            HttpResponseMessage response =  await httpClient.GetAsync(url);
+            // var httpClient = new HttpClient();
+            HttpResponseMessage response =  await _httpClient.GetAsync(url);
             
             string responseBody = await response.Content.ReadAsStringAsync();
 
@@ -92,11 +100,11 @@ namespace CyberBrief.Services
         {
            // string? reqid = await _context.Images.Where(x => x.Name == imgname).Select(x => x.requestId).FirstOrDefaultAsync();
             if (reqid == null) throw new Exception("the image dont exest");
-            using HttpClient client = new HttpClient();
-            string url = $"https://containerscanner.tecisfun.cloud/api/scans/status/{reqid}";
-            var httpClient = new HttpClient();
-
-            HttpResponseMessage response = await httpClient.GetAsync(url);
+           // using HttpClient client = new HttpClient();
+           // client.Timeout = TimeSpan.FromMinutes(5);
+            //string url = $"https://containerscanner.tecisfun.cloud/api/scans/status/{reqid}";
+            // var httpClient = new HttpClient();
+            HttpResponseMessage response = await _httpClient.GetAsync($"api/scans/status/{reqid}");
 
             string responseBody = await response.Content.ReadAsStringAsync();
 
@@ -115,8 +123,8 @@ namespace CyberBrief.Services
             if (existingImage != null) return existingImage;
 
             // 2. Start the scan
-            using HttpClient client = new HttpClient(); // Note: Ideally, use IHttpClientFactory
-            string url = "https://containerscanner.tecisfun.cloud/api/scans/start";
+            //using HttpClient client = new HttpClient(); // Note: Ideally, use IHttpClientFactory
+           // string url = "https://containerscanner.tecisfun.cloud/api/scans/start";
 
             var scanRequest = new ScanRequest(
                 img.image,
@@ -125,8 +133,10 @@ namespace CyberBrief.Services
                 img.dockerImageId ?? string.Empty,
                 img.repositoryId ?? string.Empty
             );
+            //client.Timeout = TimeSpan.FromMinutes(5);
+            HttpResponseMessage response = await _httpClient.PostAsJsonAsync("api/scans/start", scanRequest);
+            
 
-            HttpResponseMessage response = await client.PostAsJsonAsync(url, scanRequest);
             response.EnsureSuccessStatusCode();
 
             string responseBody = await response.Content.ReadAsStringAsync();
