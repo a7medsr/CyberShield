@@ -92,6 +92,21 @@ namespace CyberBrief.Migrations
                     b.ToTable("Summarys");
                 });
 
+            modelBuilder.Entity("SummaryVulnerability", b =>
+                {
+                    b.Property<string>("SummariesId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("VulnerabilitiesId")
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("SummariesId", "VulnerabilitiesId");
+
+                    b.HasIndex("VulnerabilitiesId");
+
+                    b.ToTable("SummaryVulnerabilities", (string)null);
+                });
+
             modelBuilder.Entity("Vulnerability", b =>
                 {
                     b.Property<string>("Id")
@@ -109,33 +124,24 @@ namespace CyberBrief.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("SummaryId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("vulnerability")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
                     b.HasKey("Id");
-
-                    b.HasIndex("SummaryId");
 
                     b.ToTable("Vulnerabilities");
                 });
 
-            modelBuilder.Entity("Vulnerability", b =>
+            modelBuilder.Entity("SummaryVulnerability", b =>
                 {
                     b.HasOne("Summary", null)
-                        .WithMany("Vulnerabilities")
-                        .HasForeignKey("SummaryId")
+                        .WithMany()
+                        .HasForeignKey("SummariesId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
 
-            modelBuilder.Entity("Summary", b =>
-                {
-                    b.Navigation("Vulnerabilities");
+                    b.HasOne("Vulnerability", null)
+                        .WithMany()
+                        .HasForeignKey("VulnerabilitiesId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

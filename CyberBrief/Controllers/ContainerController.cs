@@ -18,29 +18,21 @@ namespace CyberBrief.Controllers
             _context = context;
 
         }
-
-        //[HttpPost("scan-image")]
-        //public async Task<IActionResult> ScanImage(string name)
-        //{
-
-        //    ScanResultDto resultDto =await _containerServices.GetSummaryAsync(name);
-
-        //    return Ok(resultDto);
-        //}
-        [HttpPost("start-scan")]
+        
+        [HttpPost("scan-scan")]
         public async Task<IActionResult> StartScan([FromBody] imgforscan img)
         {
             var result = await _containerServices.StratScanAsync(img);
           
             return Ok(result);
         }
-        [HttpGet("status")]
-        public async Task<Status> status(string imgname)
-        {
 
-            var result = await _containerServices.GetStatusAsync(imgname);
-            
-            return result;
+        [HttpGet("Image-Summary")]
+        public async Task<IActionResult> GetSummary(string imagename)
+        {
+            var result=await _containerServices.GetSummary(imagename);
+            return Ok(result);
         }
+
     }
 }
