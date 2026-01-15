@@ -18,156 +18,139 @@ namespace CyberBrief.Services
             _context = context;
             _httpClient = factory.CreateClient("ContainerScanner");
         }
-
         
-          public async Task<Image?> StratScanAsync(imgforscan img)
+        public async Task<summaryDto?> StratScanAsync(imgforscan img)
         {
-            Image? existingImage = await _context.Images.Where(x => x.Name == img.image).FirstOrDefaultAsync();
-            if (existingImage != null) return existingImage;
-            
-            var scanRequest = new ScanRequest(
-                img.image,
-                img.tag ?? "latest",
-                img.Source ?? "registry",
-                img.dockerImageId ?? string.Empty, 
-                img.repositoryId ?? string.Empty
-            );
-            HttpResponseMessage response = await _httpClient.PostAsJsonAsync("api/scans/start", scanRequest);
-            response.EnsureSuccessStatusCode();
-            string responseBody = await response.Content.ReadAsStringAsync();
-            ScanResponse result = JsonSerializer.Deserialize<ScanResponse>(responseBody);
-            
-            if (result == null || string.IsNullOrEmpty(result.requestId))
+            // 1. Check for existing scan to avoid redundant work
+            var existingImage = await GetExistingImageAsync(img.image);
+            if (existingImage != null) return await GetSummary(img.image);
+            // 2. Initiate the scan and poll for completion
+            var scanResponse = await InitiateScanRequestAsync(img);
+            var finalStatus = await PollScanStatusUntilCompleteAsync(scanResponse.requestId);
+
+            if (finalStatus.progress != 100)
             {
-                throw new Exception("Failed to parse scan response or requestId is missing.");
-            } 
+                throw new Exception($"Scan failed to complete. Final status: {finalStatus.status}");
+            }
+
+            // 3. Fetch findings
+            var scanResultDto = await GetSummaryAsync(img.image, scanResponse.scanId);
+
+            // 4. Process and Save results
+             await SaveScanResultsToDatabaseAsync(img, scanResponse, finalStatus, scanResultDto);
+             return await GetSummary(img.image);
+        }
+        
+        #region start scann logic
+        private async Task<Status> PollScanStatusUntilCompleteAsync(string requestId)
+        {
             Status status = null;
-            bool isCompleted = false;
-            int maxAttempts = 10; 
             int attempts = 0;
+            const int maxAttempts = 10;
 
-            while (!isCompleted && attempts < maxAttempts)
+            while (attempts < maxAttempts)
             {
-                status = await getstatusbyid(result.requestId);
+                status = await getstatusbyid(requestId);
+                if (status.progress == 100) return status;
 
-                if (status.progress == 100)
-                {
-                    isCompleted = true;
-                }
-                else
-                {
-                    attempts++;
-                    await Task.Delay(TimeSpan.FromSeconds(30));
-                }
+                attempts++;
+                await Task.Delay(TimeSpan.FromSeconds(30));
             }
-            
-            if (status?.progress != 100)
-            {
-                throw new Exception("Scan timed out or failed to reach 100%.");
-            }
-            
-            ScanResultDto summarydto=await GetSummaryAsync(scanRequest.image, result.scanId);
-            
-            // 4. Save to Database
-            Image image = new Image
+
+            throw new Exception("Scan timed out before reaching 100%.");
+        }
+        private Summary MapDtoToSummary(string imageId, ScanResultDto dto, List<RawVulnerability> uniqueVuls)
+        {
+            return new Summary
             {
                 Id = Guid.NewGuid().ToString(),
-                Name = scanRequest.image,
-                Tag = scanRequest.tag,
-                requestId = result.requestId,
-                scanId = result.scanId,
+                ImageId = imageId,
+                StartedAt = dto.StartedAt,
+                FinishedAt = dto.FinishedAt,
+                TotalVulnerabilities = uniqueVuls.Count,
+        
+                // Ensure counting logic uses the RawVulnerability properties
+                CriticalVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase)),
+                HighVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase)),
+                MediumVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase)),
+                LowVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase)),
+        
+                // Initialize the collection (don't try to assign the list here yet)
+                Vulnerabilities = new List<Vulnerability>()
+            };
+        }
+        private async Task<Image> SaveScanResultsToDatabaseAsync(imgforscan img, ScanResponse scanRes, Status status, ScanResultDto dto)
+        {
+            var image = new Image
+            {
+                Id = Guid.NewGuid().ToString(),
+                Name = img.image,
+                Tag = img.tag ?? "latest",
+                requestId = scanRes.requestId,
+                scanId = scanRes.scanId,
                 Status = status.status,
                 Progres = status.progress
             };
-            Summary summary = new Summary
-            {
-                Id = Guid.NewGuid().ToString(),
-                ImageId = image.Id,
-                StartedAt=summarydto.StartedAt,
-                FinishedAt=summarydto.FinishedAt,
-                //TotalVulnerabilities=summarydto.Total,
-                //CriticalVulnerabilities=summarydto.Critical,
-               // HighVulnerabilities=summarydto.High,
-               // MediumVulnerabilities=summarydto.Medium,
-               // LowVulnerabilities=summarydto.Low,
-                Vulnerabilities = new List<Vulnerability>()
-            };
-            // 1. Calculate counts directly from the raw DTO data first
-            var uniqueVulnerabilities = summarydto.Vulnerabilities
-                .GroupBy(v => v.Vulnerability)
-                .Select(g => g.First()) // Take the first occurrence of each unique CVE
-                .ToList();
-           // summary.CriticalVulnerabilities = summarydto.Vulnerabilities.Count(x => x.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase));
-           // summary.HighVulnerabilities = summarydto.Vulnerabilities.Count(x => x.Severity.Equals("High", StringComparison.OrdinalIgnoreCase));
-          //  summary.MediumVulnerabilities = summarydto.Vulnerabilities.Count(x => x.Severity.Equals("Medium", StringComparison.OrdinalIgnoreCase));
-          //  summary.LowVulnerabilities = summarydto.Vulnerabilities.Count(x => x.Severity.Equals("Low", StringComparison.OrdinalIgnoreCase));
-         //   summary.TotalVulnerabilities = summarydto.Vulnerabilities.Count;
 
-// 2. Handle database persistence
-            var incomvulIds = summarydto.Vulnerabilities.Select(v => v.Vulnerability).Distinct().ToList();
-            var exestvulId = await _context.Vulnerabilities.Where(v => incomvulIds.Contains(v.Id)).ToDictionaryAsync(v => v.Id);
-            var localCache = new Dictionary<string, Vulnerability>(exestvulId);
-            foreach (var vulDto in summarydto.Vulnerabilities)
+            var uniqueVulDtos = dto.Vulnerabilities
+                .GroupBy(v => v.Vulnerability)
+                .Select(g => g.First())
+                .ToList();
+
+            var summary = MapDtoToSummary(image.Id, dto, uniqueVulDtos);
+
+            // Resolve which vulnerabilities already exist in DB
+            var incomingIds = uniqueVulDtos.Select(v => v.Vulnerability).ToList();
+            var existingVuls = await _context.Vulnerabilities
+                .Where(v => incomingIds.Contains(v.Id))
+                .ToDictionaryAsync(v => v.Id);
+
+            foreach (var vDto in uniqueVulDtos)
             {
-                if (localCache.TryGetValue(vulDto.Vulnerability, out var existingVul))
+                if (existingVuls.TryGetValue(vDto.Vulnerability, out var existing))
                 {
-                    summary.Vulnerabilities.Add(existingVul);
+                    summary.Vulnerabilities.Add(existing);
                 }
                 else
                 {
                     var newVul = new Vulnerability
                     {
-                        Id = vulDto.Vulnerability, 
-                        Package = vulDto.Package,
-                        Severity = vulDto.Severity,
-                        Source = vulDto.Source
+                        Id = vDto.Vulnerability,
+                        Package = vDto.Package,
+                        Severity = vDto.Severity,
+                        Source = vDto.Source
                     };
-                    _context.Vulnerabilities.Add(newVul); // Track the new entity
-                    localCache[vulDto.Vulnerability] = newVul;
+                    _context.Vulnerabilities.Add(newVul);
+                    existingVuls[newVul.Id] = newVul; // Prevent duplicates in same loop
                     summary.Vulnerabilities.Add(newVul);
                 }
             }
 
-            var mp = new Dictionary<string, int>();
-            int c = 0;
-            mp["low"] = 0;
-            mp["high"] = 0;
-            mp["critical"] = 0;
-            mp["medium"] = 0;
-            foreach (var i in localCache)
-            {
-                if (i.Value.Severity == "CRITICAL" || i.Value.Severity == "Critical")
-                {
-                    mp[i.Value.Severity.ToLower()]++;
-                }
-                if (i.Value.Severity == "HIGH" || i.Value.Severity == "High")
-                {
-                    mp[i.Value.Severity.ToLower()]++;
-                }
-                if (i.Value.Severity == "Medium" || i.Value.Severity == "MEDIUM")
-                {
-                    mp[i.Value.Severity.ToLower()]++;
-                }
-                if (i.Value.Severity == "LOW" || i.Value.Severity == "Low")
-                {
-                    mp[i.Value.Severity.ToLower()]++;
-                }
-
-                c++;
-            }
-
-            summary.LowVulnerabilities = mp["low"];
-            summary.MediumVulnerabilities = mp["medium"];
-            summary.HighVulnerabilities = mp["high"];
-            summary.TotalVulnerabilities = c;
-            
             image.SummaryId = summary.Id;
             await _context.Images.AddAsync(image);
             await _context.Summarys.AddAsync(summary);
-            await _context.SaveChangesAsync(); 
+            await _context.SaveChangesAsync();
+
             return image;
         }
+        private async Task<ScanResponse> InitiateScanRequestAsync(imgforscan img)
+        {
+            var request = new ScanRequest(
+                img.image,
+                img.tag ?? "latest",
+                img.Source ?? "registry",
+                img.dockerImageId ?? string.Empty,
+                img.repositoryId ?? string.Empty
+            );
 
+            var response = await _httpClient.PostAsJsonAsync("api/scans/start", request);
+            response.EnsureSuccessStatusCode();
+    
+            return await response.Content.ReadFromJsonAsync<ScanResponse>() 
+                   ?? throw new Exception("Failed to parse scan response.");
+        }
+        private async Task<Image?> GetExistingImageAsync(string name) => 
+            await _context.Images.FirstOrDefaultAsync(x => x.Name == name);
         private async Task<ScanResultDto> GetSummaryAsync(string name,string scanId)
         {
             string safeName = Uri.EscapeDataString(name);
@@ -204,14 +187,13 @@ namespace CyberBrief.Services
                 Vulnerabilities = apiResponse.Vulnerabilities? .ToList() ?? new List<RawVulnerability>()
             };
         }
+        #endregion
+
+        
         private async Task<Status> getstatusbyid(string reqid)
         {
-           // string? reqid = await _context.Images.Where(x => x.Name == imgname).Select(x => x.requestId).FirstOrDefaultAsync();
             if (reqid == null) throw new Exception("the image dont exest");
-           // using HttpClient client = new HttpClient();
-           // client.Timeout = TimeSpan.FromMinutes(5);
-            //string url = $"https://containerscanner.tecisfun.cloud/api/scans/status/{reqid}";
-            // var httpClient = new HttpClient();
+          
             HttpResponseMessage response = await _httpClient.GetAsync($"api/scans/status/{reqid}");
 
             string responseBody = await response.Content.ReadAsStringAsync();
@@ -226,9 +208,7 @@ namespace CyberBrief.Services
           var summary = await _context.Summarys
               .Include(x => x.Vulnerabilities)
               .FirstOrDefaultAsync(x => x.ImageId == image.Id);
-         // var vuls=summary.Vulnerabilities;
-        //  int criticalCount = vuls.Count(x => x.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase));     
-          
+        
           return new summaryDto 
           {
               Id = summary.Id,
@@ -246,12 +226,9 @@ namespace CyberBrief.Services
                   Source =   v.Source,
                   Severity = v.Severity
               }).ToList()
-              
              
           };
         }
-      
-
-
+        
     }
 }
