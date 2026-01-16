@@ -79,7 +79,7 @@ namespace CyberBrief
 
 
             builder.Services.AddDbContext<CyberBriefDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
-
+            builder.Services.AddHttpClient<GeminiService>();//.AddStandardResilienceHandler(); // Adds automatic retries with backoff
 
             builder.Services.AddControllers();
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

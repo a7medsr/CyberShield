@@ -1,9 +1,10 @@
-﻿using CyberBrief.DTOs.Container;
+﻿using CyberBrief.Context;
+using CyberBrief.DTOs.Container;
+using CyberBrief.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
-using CyberBrief.Services;
-using CyberBrief.Context;
+using static CyberBrief.Services.GeminiService;
 namespace CyberBrief.Controllers
 {
     [Route("api/[controller]")]
@@ -31,6 +32,12 @@ namespace CyberBrief.Controllers
         public async Task<IActionResult> GetSummary(string imagename)
         {
             var result=await _containerServices.GetSummary(imagename);
+            return Ok(result);
+        }
+        [HttpGet("cve-explenation")]
+        public async Task<IActionResult> GetSummaryAsync(string imagename)
+        {
+            var result = await _containerServices.GetPendingCveIdsAsync(imagename);
             return Ok(result);
         }
 
