@@ -46,6 +46,7 @@ namespace CyberBrief
             // Register services
             builder.Services.AddScoped<IUrlExpanderService, UrlExpanderService>();
             builder.Services.AddScoped<ISafetyAnalyzerService, AdvancedSafetyAnalyzerService>();
+            builder.Services.AddScoped<ICVEexplanationService, CVEexplanationService>();
             #endregion
 
             #region Email chick
