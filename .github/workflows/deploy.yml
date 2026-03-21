@@ -16,7 +16,7 @@ jobs:
       - name: Build and Push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./CyberBrief
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/cyberbrief:latest
       - name: Deploy to VPS
