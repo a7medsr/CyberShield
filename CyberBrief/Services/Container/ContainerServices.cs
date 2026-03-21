@@ -5,95 +5,108 @@ using Microsoft.EntityFrameworkCore;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using CyberBrief.Services.IServices;
 using static System.Net.Mime.MediaTypeNames;
+
 namespace CyberBrief.Services
 {
-    public class ContainerServices
+    public class ContainerServices:IContainerServices
     {
         private readonly CyberBriefDbContext _context;
         private readonly HttpClient _httpClient;
-        private readonly CVEexplanationService _cvEexplanationService;
+        private readonly ICVEexplanationService _cvEexplanationService;
 
-        public ContainerServices(CyberBriefDbContext context, IHttpClientFactory factory,CVEexplanationService cvEexplanationService)
+        public ContainerServices(CyberBriefDbContext context, IHttpClientFactory factory, ICVEexplanationService cvEexplanationService)
         {
             _context = context;
             _httpClient = factory.CreateClient("ContainerScanner");
             _cvEexplanationService = cvEexplanationService;
         }
-        
-        public async Task<summaryDto?> StratScanAsync(imgforscan img)
+
+        public async Task<string> StratScanAsync(imgforscan img)
         {
-            // 1. Check for existing scan to avoid redundant work
+            // 1. Check for existing scan
             var existingImage = await GetExistingImageAsync(img.image);
-            if (existingImage != null) return await GetSummary(img.image);
-            // 2. Initiate the scan and poll for completion
+            if (existingImage != null) return "Scan already exists or is in progress.";
+
+            // 2. Initiate the scan and get IDs
             var scanResponse = await InitiateScanRequestAsync(img);
-            var finalStatus = await PollScanStatusUntilCompleteAsync(scanResponse.requestId);
 
-            if (finalStatus.progress != 100)
-            {
-                throw new Exception($"Scan failed to complete. Final status: {finalStatus.status}");
-            }
-
-            // 3. Fetch findings
-            var scanResultDto = await GetSummaryAsync(img.image, scanResponse.scanId);
-
-            // 4. Process and Save results
-             await SaveScanResultsToDatabaseAsync(img, scanResponse, finalStatus, scanResultDto);
-             return await GetSummary(img.image);
-        }
-        
-        #region start scann logic
-        private async Task<Status> PollScanStatusUntilCompleteAsync(string requestId)
-        {
-            Status status = null;
-            int attempts = 0;
-            const int maxAttempts = 10;
-
-            while (attempts < maxAttempts)
-            {
-                status = await getstatusbyid(requestId);
-                if (status.progress == 100) return status;
-
-                attempts++;
-                await Task.Delay(TimeSpan.FromSeconds(30));
-            }
-
-            throw new Exception("Scan timed out before reaching 100%.");
-        }
-        private Summary MapDtoToSummary(string imageId, ScanResultDto dto, List<RawVulnerability> uniqueVuls)
-        {
-            return new Summary
-            {
-                Id = Guid.NewGuid().ToString(),
-                ImageId = imageId,
-                StartedAt = dto.StartedAt,
-                FinishedAt = dto.FinishedAt,
-                TotalVulnerabilities = uniqueVuls.Count,
-        
-                // Ensure counting logic uses the RawVulnerability properties
-                CriticalVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase)),
-                HighVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase)),
-                MediumVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase)),
-                LowVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase)),
-        
-                // Initialize the collection (don't try to assign the list here yet)
-                Vulnerabilities = new List<Vulnerability>()
-            };
-        }
-        private async Task<Image> SaveScanResultsToDatabaseAsync(imgforscan img, ScanResponse scanRes, Status status, ScanResultDto dto)
-        {
+            // 3. Create initial record in DB with 0 progress
             var image = new Image
             {
                 Id = Guid.NewGuid().ToString(),
                 Name = img.image,
                 Tag = img.tag ?? "latest",
-                requestId = scanRes.requestId,
-                scanId = scanRes.scanId,
-                Status = status.status,
-                Progres = status.progress
+                requestId = scanResponse.requestId,
+                scanId = scanResponse.scanId,
+                Status = "Started",
+                Progres = 0
             };
 
+            await _context.Images.AddAsync(image);
+            await _context.SaveChangesAsync();
+
+            return "Scan started successfully";
+        }
+
+        public async Task<object> GetSummary(string Imagename)
+        {
+            var image = await _context.Images.FirstOrDefaultAsync(x => x.Name == Imagename);
+            if (image == null) return new { message = "Image not found" };
+
+            // If not finished in DB, check remote status
+            if (image.Progres < 100)
+            {
+                var currentStatus = await getstatusbyid(image.requestId);
+                
+                // Update DB with latest progress
+                image.Progres = currentStatus.progress;
+                image.Status = currentStatus.status;
+                await _context.SaveChangesAsync();
+
+                if (currentStatus.progress < 100)
+                {
+                    return new { message = "Scan is not finished yet", progress = image.Progres, status = image.Status };
+                }
+
+                // If it just hit 100%, process the results now
+                var scanResultDto = await GetSummaryAsync(image.Name, image.scanId);
+                await SaveScanResultsToDatabaseAsync(image, scanResultDto);
+                await _cvEexplanationService.GetExplanation(image.Name);
+            }
+
+            // Return the full summary
+            var summary = await _context.Summarys
+                .Include(x => x.Vulnerabilities)
+                .FirstOrDefaultAsync(x => x.ImageId == image.Id);
+
+            return new summaryDto
+            {
+                Id = summary.Id,
+                ImageName = Imagename,
+                StartedAt = summary.StartedAt,
+                FinishedAt = summary.FinishedAt,
+                TotalVulnerabilities = summary.Vulnerabilities.Count,
+                CriticalVulnerabilities = summary.CriticalVulnerabilities,
+                HighetVulnerabilities = summary.HighVulnerabilities,
+                MediumVulnerabilities = summary.MediumVulnerabilities,
+                LowetVulnerabilities = summary.LowVulnerabilities,
+                Vulnerabilities = summary.Vulnerabilities.Select(v => new VulnerabilityDto
+                {
+                    Package = v.Package,
+                    Vulnerability = v.Id,
+                    Source = v.Source,
+                    Severity = v.Severity,
+                    Explenation = v.Explanation,
+                    Batch = v.Batch
+                }).ToList()
+            };
+        }
+
+        #region Logic Methods
+        private async Task<Image> SaveScanResultsToDatabaseAsync(Image image, ScanResultDto dto)
+        {
             var uniqueVulDtos = dto.Vulnerabilities
                 .GroupBy(v => v.Vulnerability)
                 .Select(g => g.First())
@@ -101,7 +114,6 @@ namespace CyberBrief.Services
 
             var summary = MapDtoToSummary(image.Id, dto, uniqueVulDtos);
 
-            // Resolve which vulnerabilities already exist in DB
             var incomingIds = uniqueVulDtos.Select(v => v.Vulnerability).ToList();
             var existingVuls = await _context.Vulnerabilities
                 .Where(v => incomingIds.Contains(v.Id))
@@ -123,18 +135,35 @@ namespace CyberBrief.Services
                         Source = vDto.Source
                     };
                     _context.Vulnerabilities.Add(newVul);
-                    existingVuls[newVul.Id] = newVul; // Prevent duplicates in same loop
+                    existingVuls[newVul.Id] = newVul;
                     summary.Vulnerabilities.Add(newVul);
                 }
             }
 
             image.SummaryId = summary.Id;
-            await _context.Images.AddAsync(image);
             await _context.Summarys.AddAsync(summary);
             await _context.SaveChangesAsync();
 
             return image;
         }
+
+        private Summary MapDtoToSummary(string imageId, ScanResultDto dto, List<RawVulnerability> uniqueVuls)
+        {
+            return new Summary
+            {
+                Id = Guid.NewGuid().ToString(),
+                ImageId = imageId,
+                StartedAt = dto.StartedAt,
+                FinishedAt = dto.FinishedAt,
+                TotalVulnerabilities = uniqueVuls.Count,
+                CriticalVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("CRITICAL", StringComparison.OrdinalIgnoreCase)),
+                HighVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("HIGH", StringComparison.OrdinalIgnoreCase)),
+                MediumVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("MEDIUM", StringComparison.OrdinalIgnoreCase)),
+                LowVulnerabilities = uniqueVuls.Count(v => v.Severity.Equals("LOW", StringComparison.OrdinalIgnoreCase)),
+                Vulnerabilities = new List<Vulnerability>()
+            };
+        }
+
         private async Task<ScanResponse> InitiateScanRequestAsync(imgforscan img)
         {
             var request = new ScanRequest(
@@ -147,31 +176,24 @@ namespace CyberBrief.Services
 
             var response = await _httpClient.PostAsJsonAsync("api/scans/start", request);
             response.EnsureSuccessStatusCode();
-    
-            return await response.Content.ReadFromJsonAsync<ScanResponse>() 
+
+            return await response.Content.ReadFromJsonAsync<ScanResponse>()
                    ?? throw new Exception("Failed to parse scan response.");
         }
-        private async Task<Image?> GetExistingImageAsync(string name) => 
+
+        private async Task<Image?> GetExistingImageAsync(string name) =>
             await _context.Images.FirstOrDefaultAsync(x => x.Name == name);
-        private async Task<ScanResultDto> GetSummaryAsync(string name,string scanId)
+
+        private async Task<ScanResultDto> GetSummaryAsync(string name, string scanId)
         {
             string safeName = Uri.EscapeDataString(name);
-
             var response = await _httpClient.GetAsync($"api/image/{safeName}/scan/{scanId}/json-report");
-
-
             response.EnsureSuccessStatusCode();
 
             var jsonString = await response.Content.ReadAsStringAsync();
+            var apiResponse = JsonSerializer.Deserialize<ScanApiResponse>(jsonString, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            var apiResponse = JsonSerializer.Deserialize<ScanApiResponse>(
-                jsonString,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-            );
-
-            if (apiResponse == null || apiResponse.Summary == null)
-                return null;
-
+            if (apiResponse == null || apiResponse.Summary == null) return null;
 
             return new ScanResultDto
             {
@@ -180,119 +202,22 @@ namespace CyberBrief.Services
                 Tag = apiResponse.Summary.Image.Tag,
                 StartedAt = apiResponse.Summary.StartedAt,
                 FinishedAt = apiResponse.Summary.FinishedAt,
-
                 Critical = apiResponse.Summary.Counts.Critical,
                 High = apiResponse.Summary.Counts.High,
                 Medium = apiResponse.Summary.Counts.Medium,
                 Low = apiResponse.Summary.Counts.Low,
                 Total = apiResponse.Summary.Counts.Total,
-                Vulnerabilities = apiResponse.Vulnerabilities? .ToList() ?? new List<RawVulnerability>()
+                Vulnerabilities = apiResponse.Vulnerabilities?.ToList() ?? new List<RawVulnerability>()
             };
         }
-        #endregion
 
-        
         private async Task<Status> getstatusbyid(string reqid)
         {
-            if (reqid == null) throw new Exception("the image dont exest");
-          
+            if (reqid == null) throw new Exception("Request ID is null");
             HttpResponseMessage response = await _httpClient.GetAsync($"api/scans/status/{reqid}");
-
             string responseBody = await response.Content.ReadAsStringAsync();
-
-            Status scanStatus = JsonSerializer.Deserialize<Status>(responseBody);
-            return scanStatus;
+            return JsonSerializer.Deserialize<Status>(responseBody);
         }
-
-        public async Task<summaryDto> GetSummary(string Imagename)
-        {
-          Image image= await _context.Images.Where(x=>x.Name==Imagename).FirstOrDefaultAsync();
-          var summary = await _context.Summarys
-              .Include(x => x.Vulnerabilities)
-              .FirstOrDefaultAsync(x => x.ImageId == image.Id);
-        
-          return new summaryDto 
-          {
-              Id = summary.Id,
-              ImageName = Imagename,
-              StartedAt =  summary.StartedAt,
-              FinishedAt =  summary.FinishedAt,
-              TotalVulnerabilities =  summary.Vulnerabilities.Count,
-              CriticalVulnerabilities =   summary.CriticalVulnerabilities,
-              HighetVulnerabilities =  summary.HighVulnerabilities,
-              MediumVulnerabilities = summary.MediumVulnerabilities,
-              LowetVulnerabilities =   summary.LowVulnerabilities,
-              Vulnerabilities = summary.Vulnerabilities.Select(v => new VulnerabilityDto {
-                  Package =  v.Package,
-                  Vulnerability = v.Id,
-                  Source =   v.Source,
-                  Severity = v.Severity
-              }).ToList()
-             
-          };
-        }
-        // public async Task<List<GeminiService.CveAnalysis>> GetPendingCveIdsAsync(string imagename)
-        // {
-        //     // 1. Find the image and its vulnerabilities
-        //     var image = await _context.Images.FirstOrDefaultAsync(x => x.Name == imagename);
-        //     if (image == null) return new List<GeminiService.CveAnalysis>();
-        //
-        //     var summary = await _context.Summarys
-        //         .Include(x => x.Vulnerabilities)
-        //         .FirstOrDefaultAsync(x => x.ImageId == image.Id);
-        //
-        //     if (summary == null) return new List<GeminiService.CveAnalysis>();
-        //
-        //     // 2. Identify CVEs that don't have an explanation yet
-        //     var vulWithNoExp = summary.Vulnerabilities
-        //         .Where(v => string.IsNullOrEmpty(v.Explanation))
-        //         .Select(v => v.Id)
-        //         .ToList();
-        //
-        //     if (!vulWithNoExp.Any()) return new List<GeminiService.CveAnalysis>();
-        //
-        //     var allResults = new List<GeminiService.CveAnalysis>();
-        //
-        //     // 3. BATCHING: Process 10 CVEs at a time
-        //     // .Chunk() requires .NET 6 or higher
-        //     var batches = vulWithNoExp.Chunk(10);
-        //
-        //     foreach (var batch in batches)
-        //     {
-        //         try
-        //         {
-        //             // Send the entire list of 10 to Gemini in ONE call
-        //             var batchResult = await _geminiService.GetVulnerabilityAnalysisAsync(batch.ToList());
-        //
-        //             if (batchResult != null)
-        //             {
-        //                 allResults.AddRange(batchResult);
-        //
-        //                 // 4. Update your database immediately so you don't lose progress
-        //                 foreach (var analysis in batchResult)
-        //                 {
-        //                     var vulnerability = summary.Vulnerabilities.FirstOrDefault(v => v.Id == analysis.cveId);
-        //                     if (vulnerability != null)
-        //                     {
-        //                         vulnerability.Explanation = analysis.explanation;
-        //                         vulnerability.Batch = analysis.patch;
-        //                     }
-        //                 }
-        //                 await _context.SaveChangesAsync();
-        //             }
-        //
-        //             // 5. THROTTLING: Wait 2 seconds to keep the Gemini Free Tier happy
-        //             await Task.Delay(10000);
-        //         }
-        //         catch (HttpRequestException ex) when (ex.Message.Contains("429"))
-        //         {
-        //             // If we still hit a 429, wait 10 seconds and the loop will continue to the next batch
-        //             await Task.Delay(10000);
-        //         }
-        //     }
-        //
-        //     return allResults;
-        // }
-
+        #endregion
     }
 }

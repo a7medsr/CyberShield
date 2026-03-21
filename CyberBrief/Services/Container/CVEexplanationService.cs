@@ -2,11 +2,12 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using CyberBrief.Context;
+using CyberBrief.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 
 namespace CyberBrief.Services
 {
-    public class CVEexplanationService
+    public class CVEexplanationService:ICVEexplanationService
     {
         private readonly CyberBriefDbContext _context;
         private readonly HttpClient _http;
