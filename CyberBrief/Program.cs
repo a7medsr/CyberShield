@@ -38,6 +38,10 @@ namespace CyberBrief
                 client.Timeout = TimeSpan.FromSeconds(15);
                 client.DefaultRequestHeaders.Add("User-Agent", "CyberShield-SecurityAnalyzer/1.0");
             });
+            builder.Services.AddHttpClient<CVEexplanationService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(5);
+            });
 
             // Register services
             builder.Services.AddScoped<IUrlExpanderService, UrlExpanderService>();
@@ -63,6 +67,7 @@ namespace CyberBrief
             builder.Services.AddHttpClient<PasswordInspectorService>();
             builder.Services.AddScoped<PasswordInspectorService>();
             builder.Services.AddScoped<ContainerServices>();
+            builder.Services.AddScoped<CVEexplanationService>();
 
 
             #endregion
@@ -79,7 +84,6 @@ namespace CyberBrief
 
 
             builder.Services.AddDbContext<CyberBriefDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
-            builder.Services.AddHttpClient<GeminiService>();//.AddStandardResilienceHandler(); // Adds automatic retries with backoff
 
             builder.Services.AddControllers();
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle

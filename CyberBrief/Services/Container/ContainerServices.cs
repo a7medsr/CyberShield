@@ -12,13 +12,13 @@ namespace CyberBrief.Services
     {
         private readonly CyberBriefDbContext _context;
         private readonly HttpClient _httpClient;
-        private readonly GeminiService _geminiService;
+        private readonly CVEexplanationService _cvEexplanationService;
 
-        public ContainerServices(CyberBriefDbContext context, IHttpClientFactory factory,GeminiService geminiService)
+        public ContainerServices(CyberBriefDbContext context, IHttpClientFactory factory,CVEexplanationService cvEexplanationService)
         {
             _context = context;
             _httpClient = factory.CreateClient("ContainerScanner");
-            _geminiService = geminiService;
+            _cvEexplanationService = cvEexplanationService;
         }
         
         public async Task<summaryDto?> StratScanAsync(imgforscan img)
@@ -231,68 +231,68 @@ namespace CyberBrief.Services
              
           };
         }
-        public async Task<List<GeminiService.CveAnalysis>> GetPendingCveIdsAsync(string imagename)
-        {
-            // 1. Find the image and its vulnerabilities
-            var image = await _context.Images.FirstOrDefaultAsync(x => x.Name == imagename);
-            if (image == null) return new List<GeminiService.CveAnalysis>();
-
-            var summary = await _context.Summarys
-                .Include(x => x.Vulnerabilities)
-                .FirstOrDefaultAsync(x => x.ImageId == image.Id);
-
-            if (summary == null) return new List<GeminiService.CveAnalysis>();
-
-            // 2. Identify CVEs that don't have an explanation yet
-            var vulWithNoExp = summary.Vulnerabilities
-                .Where(v => string.IsNullOrEmpty(v.Explanation))
-                .Select(v => v.Id)
-                .ToList();
-
-            if (!vulWithNoExp.Any()) return new List<GeminiService.CveAnalysis>();
-
-            var allResults = new List<GeminiService.CveAnalysis>();
-
-            // 3. BATCHING: Process 10 CVEs at a time
-            // .Chunk() requires .NET 6 or higher
-            var batches = vulWithNoExp.Chunk(10);
-
-            foreach (var batch in batches)
-            {
-                try
-                {
-                    // Send the entire list of 10 to Gemini in ONE call
-                    var batchResult = await _geminiService.GetVulnerabilityAnalysisAsync(batch.ToList());
-
-                    if (batchResult != null)
-                    {
-                        allResults.AddRange(batchResult);
-
-                        // 4. Update your database immediately so you don't lose progress
-                        foreach (var analysis in batchResult)
-                        {
-                            var vulnerability = summary.Vulnerabilities.FirstOrDefault(v => v.Id == analysis.cveId);
-                            if (vulnerability != null)
-                            {
-                                vulnerability.Explanation = analysis.explanation;
-                                vulnerability.Batch = analysis.patch;
-                            }
-                        }
-                        await _context.SaveChangesAsync();
-                    }
-
-                    // 5. THROTTLING: Wait 2 seconds to keep the Gemini Free Tier happy
-                    await Task.Delay(10000);
-                }
-                catch (HttpRequestException ex) when (ex.Message.Contains("429"))
-                {
-                    // If we still hit a 429, wait 10 seconds and the loop will continue to the next batch
-                    await Task.Delay(10000);
-                }
-            }
-
-            return allResults;
-        }
+        // public async Task<List<GeminiService.CveAnalysis>> GetPendingCveIdsAsync(string imagename)
+        // {
+        //     // 1. Find the image and its vulnerabilities
+        //     var image = await _context.Images.FirstOrDefaultAsync(x => x.Name == imagename);
+        //     if (image == null) return new List<GeminiService.CveAnalysis>();
+        //
+        //     var summary = await _context.Summarys
+        //         .Include(x => x.Vulnerabilities)
+        //         .FirstOrDefaultAsync(x => x.ImageId == image.Id);
+        //
+        //     if (summary == null) return new List<GeminiService.CveAnalysis>();
+        //
+        //     // 2. Identify CVEs that don't have an explanation yet
+        //     var vulWithNoExp = summary.Vulnerabilities
+        //         .Where(v => string.IsNullOrEmpty(v.Explanation))
+        //         .Select(v => v.Id)
+        //         .ToList();
+        //
+        //     if (!vulWithNoExp.Any()) return new List<GeminiService.CveAnalysis>();
+        //
+        //     var allResults = new List<GeminiService.CveAnalysis>();
+        //
+        //     // 3. BATCHING: Process 10 CVEs at a time
+        //     // .Chunk() requires .NET 6 or higher
+        //     var batches = vulWithNoExp.Chunk(10);
+        //
+        //     foreach (var batch in batches)
+        //     {
+        //         try
+        //         {
+        //             // Send the entire list of 10 to Gemini in ONE call
+        //             var batchResult = await _geminiService.GetVulnerabilityAnalysisAsync(batch.ToList());
+        //
+        //             if (batchResult != null)
+        //             {
+        //                 allResults.AddRange(batchResult);
+        //
+        //                 // 4. Update your database immediately so you don't lose progress
+        //                 foreach (var analysis in batchResult)
+        //                 {
+        //                     var vulnerability = summary.Vulnerabilities.FirstOrDefault(v => v.Id == analysis.cveId);
+        //                     if (vulnerability != null)
+        //                     {
+        //                         vulnerability.Explanation = analysis.explanation;
+        //                         vulnerability.Batch = analysis.patch;
+        //                     }
+        //                 }
+        //                 await _context.SaveChangesAsync();
+        //             }
+        //
+        //             // 5. THROTTLING: Wait 2 seconds to keep the Gemini Free Tier happy
+        //             await Task.Delay(10000);
+        //         }
+        //         catch (HttpRequestException ex) when (ex.Message.Contains("429"))
+        //         {
+        //             // If we still hit a 429, wait 10 seconds and the loop will continue to the next batch
+        //             await Task.Delay(10000);
+        //         }
+        //     }
+        //
+        //     return allResults;
+        // }
 
     }
 }

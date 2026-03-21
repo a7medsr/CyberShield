@@ -4,7 +4,7 @@ using CyberBrief.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
-using static CyberBrief.Services.GeminiService;
+using static CyberBrief.Services.CVEexplanationService;
 namespace CyberBrief.Controllers
 {
     [Route("api/[controller]")]
@@ -13,19 +13,28 @@ namespace CyberBrief.Controllers
     {
         private readonly ContainerServices _containerServices;
         private readonly CyberBriefDbContext _context;
-        public ContainerController(ContainerServices containerServices, CyberBriefDbContext context)
+        private readonly CVEexplanationService _cvEexplanationService;
+        public ContainerController(ContainerServices containerServices, CyberBriefDbContext context, CVEexplanationService cvEexplanationService)
         {
             _containerServices = containerServices;
             _context = context;
+            _cvEexplanationService = cvEexplanationService;
 
         }
         
         [HttpPost("scan-scan")]
         public async Task<IActionResult> StartScan([FromBody] imgforscan img)
         {
-            var result = await _containerServices.StratScanAsync(img);
-          
-            return Ok(result);
+            try
+            {
+                var result = await _containerServices.StratScanAsync(img);
+                return Ok(result);
+            }
+            catch(Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
+           
         }
 
         [HttpGet("Image-Summary")]
@@ -37,7 +46,7 @@ namespace CyberBrief.Controllers
         [HttpGet("cve-explenation")]
         public async Task<IActionResult> GetSummaryAsync(string imagename)
         {
-            var result = await _containerServices.GetPendingCveIdsAsync(imagename);
+            var result = await _cvEexplanationService.GetExplanation(imagename);
             return Ok(result);
         }
 
