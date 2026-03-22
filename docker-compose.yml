@@ -1,0 +1,8 @@
+version: '3.8'
+services:
+  my-app:
+    image: avre1/cyberbrief:latest
+    container_name: my-app
+    ports:
+      - "8181:8080"
+    restart: always
