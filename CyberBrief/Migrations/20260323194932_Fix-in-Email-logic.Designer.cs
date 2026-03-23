@@ -4,6 +4,7 @@ using CyberBrief.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CyberBrief.Migrations
 {
     [DbContext(typeof(CyberBriefDbContext))]
-    partial class CyberBriefDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260323194932_Fix-in-Email-logic")]
+    partial class FixinEmaillogic
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -72,32 +75,6 @@ namespace CyberBrief.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Results");
-                });
-
-            modelBuilder.Entity("CyberBrief.Models.PassordCheaking.PasswordAudit", b =>
-                {
-                    b.Property<string>("PasswordHash")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTime>("CheckedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("CrackTimeDisplay")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<double>("Entropy")
-                        .HasColumnType("float");
-
-                    b.Property<int>("PwnedCount")
-                        .HasColumnType("int");
-
-                    b.Property<int>("Score")
-                        .HasColumnType("int");
-
-                    b.HasKey("PasswordHash");
-
-                    b.ToTable("PasswordAudits");
                 });
 
             modelBuilder.Entity("Image", b =>

@@ -1,4 +1,5 @@
-﻿using CyberBrief.Services;
+﻿using CyberBrief.Models.Email_Checking;
+using CyberBrief.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using static PasswordInspectorService;
@@ -18,25 +19,34 @@ namespace CyberBrief.Controllers
             _inspector = inspector;
         }
 
-        [HttpGet("check-email")]
-        public async Task<IActionResult> Check(string email)
+        [HttpGet("check/{email}")]
+        public async Task<ActionResult<Result>> CheckEmail(string email)
         {
-            var result = await _breachService.CheckEmailAsync(email);
+            if (string.IsNullOrEmpty(email))
+            {
+                return BadRequest("Email is required.");
+            }
 
-            if (result == null)
-                return StatusCode(500, "Unknown error occurred.");
+            try
+            {
+                var result = await _breachService.CheckEmail(email);
 
-            if (!result.Success)
-                return StatusCode(429, result.Message);
+                if (result == null)
+                {
+                    return NotFound(new { message = "No data found or API limit exceeded." });
+                }
 
-            if (result.Found > 0)
                 return Ok(result);
-
-            return NotFound("No breaches found for this email.");
+            }
+            catch (Exception ex)
+            {
+                // In a real app, log this exception
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
 
-     
-        [HttpPost("inspect-password")]
+
+        [HttpGet("inspect-password")]
         public async Task<IActionResult> InspectPassword(string password)
         {
             if (string.IsNullOrWhiteSpace(password))

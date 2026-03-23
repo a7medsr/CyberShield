@@ -1,4 +1,8 @@
-﻿using CyberBrief.Dtos.Gmail;
+﻿using CyberBrief.Context;
+using CyberBrief.Dtos.Gmail;
+using CyberBrief.DTOs.Gmail;
+using CyberBrief.Models.Email_Checking;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 namespace CyberBrief.Services
 {
@@ -6,13 +10,15 @@ namespace CyberBrief.Services
     {
         private readonly HttpClient _httpClient;
         private readonly string _apiKey;
+        private readonly CyberBriefDbContext _context;
 
-        public BreachDirectoryService(HttpClient httpClient, string apiKey)
+        public BreachDirectoryService(HttpClient httpClient, string apiKey,CyberBriefDbContext context)
         {
             _httpClient = httpClient;
             _apiKey = apiKey;
+            _context = context;
         }
-        public async Task<BreachResponseDto?> CheckEmailAsync(string email)
+        private async Task<BreachResponseDto?> CheckEmailOutsideDatabaseAsync(string email)
         {
             var request = new HttpRequestMessage(HttpMethod.Get,
                 $"?func=auto&term={Uri.EscapeDataString(email)}");
@@ -64,7 +70,61 @@ namespace CyberBrief.Services
             }
         }
 
+        public async Task<BreachCheckResultDto?> CheckEmail(string email)
+        {
+            // 1. Fetch from DB
+            var existingEmail = await _context.Results
+                .Include(x => x.Founds)
+                .FirstOrDefaultAsync(x => x.Email == email);
 
+            Result resultEntity;
+
+            if (existingEmail == null)
+            {
+                // 2. Call API if not in DB
+                var apiRes = await CheckEmailOutsideDatabaseAsync(email);
+                if (apiRes == null || !apiRes.Success) return null;
+
+                // 3. Create Entity and save to DB
+                resultEntity = new Result
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Email = email,
+                    ResultsCount = apiRes.Found,
+                    Status = apiRes.Success,
+                    Founds = apiRes.Result?.Select(f => new Found
+                    {
+                        Id = Guid.NewGuid().ToString(),
+                        Email = f.Email,
+                        Passowrd = f.Password, // Mapping to your DB typo
+                        Hash = f.Hash,
+                        Source = f.Sources
+                    }).ToList() ?? new List<Found>()
+                };
+
+                _context.Results.Add(resultEntity);
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                resultEntity = existingEmail;
+            }
+
+            // 4. Map Entity to Output DTO (This solves the Circular Reference!)
+            return new BreachCheckResultDto
+            {
+                Email = resultEntity.Email,
+                Status = resultEntity.Status,
+                ResultsCount = resultEntity.ResultsCount,
+                Founds = resultEntity.Founds?.Select(f => new FoundDto
+                {
+                    Email = f.Email,
+                    Password = f.Passowrd,
+                    Hash = f.Hash,
+                    Source = f.Source
+                }).ToList() ?? new List<FoundDto>()
+            };
+        }
 
 
 

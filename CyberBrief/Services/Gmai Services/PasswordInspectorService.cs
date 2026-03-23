@@ -1,4 +1,7 @@
-﻿using CyberBrief.Dtos.Gmail;
+﻿using CyberBrief.Context;
+using CyberBrief.Dtos.Gmail;
+using CyberBrief.Models.PassordCheaking;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using System;
 using System.Globalization;
@@ -13,12 +16,14 @@ using System.Threading.Tasks;
 public class PasswordInspectorService
 {
     private readonly HttpClient _http;
+    private readonly CyberBriefDbContext _context;
     // guesses per second used to estimate crack time (tune as needed)
     private readonly double _guessesPerSecond = 1e10; // 10 billion (fast GPU rig)
 
-    public PasswordInspectorService(HttpClient http)
+    public PasswordInspectorService(HttpClient http,CyberBriefDbContext context)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
+        _context = context;
     }
 
     /// <summary>
@@ -26,42 +31,78 @@ public class PasswordInspectorService
     /// </summary>
     public async Task<PasswordReportDto> InspectAsync(string password)
     {
-        if (password == null) throw new ArgumentNullException(nameof(password));
+        // 1. Generate Hash for DB Lookup (Privacy First!)
+        string pwdHash = GenerateSha1(password);
 
+        // 2. Check Cache
+        var cached = await _context.PasswordAudits
+            .FirstOrDefaultAsync(x => x.PasswordHash == pwdHash);
+
+        // Check if cache is fresh (e.g., less than 30 days old)
+        if (cached != null && cached.CheckedAt > DateTime.UtcNow.AddDays(-30))
+        {
+            return MapToDto(password, cached);
+        }
+
+        // 3. Logic for New/Expired Audit
         var entropy = EstimateEntropyBits(password, out _);
         var score = MapEntropyToScore(entropy);
-
         var crackSeconds = EstimateCrackTimeSeconds(entropy, _guessesPerSecond);
         var crackDisplay = HumanReadableTime(crackSeconds);
 
-        int pwnedCount = 0;
-        try
+        int pwnedCount = await GetPwnedCountAsync(password);
+
+        // 4. Update or Add to Database
+        if (cached == null)
         {
-            pwnedCount = await GetPwnedCountAsync(password);
+            _context.PasswordAudits.Add(new PasswordAudit
+            {
+                PasswordHash = pwdHash,
+                PwnedCount = pwnedCount,
+                Entropy = entropy,
+                Score = score,
+                CrackTimeDisplay = crackDisplay
+            });
         }
-        catch
+        else
         {
-            pwnedCount = 0;
+            cached.PwnedCount = pwnedCount;
+            cached.CheckedAt = DateTime.UtcNow;
         }
 
-        var masked = Mask(password);
+        await _context.SaveChangesAsync();
 
-        // Only include breach info in the summary
-        var summary = pwnedCount > 0
-            ? $"Has already been seen {pwnedCount} time{(pwnedCount > 1 ? "s" : "")} in data breaches."
-            : "This password was not found in known breach datasets.";
+        return MapToDto(password, new PasswordAudit
+        {
+            PwnedCount = pwnedCount,
+            Entropy = entropy,
+            Score = score,
+            CrackTimeDisplay = crackDisplay
+        });
+    }
 
+    // Helper to keep code clean
+    private string GenerateSha1(string input)
+    {
+        using var sha1 = SHA1.Create();
+        var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(input));
+        return BitConverter.ToString(hashBytes).Replace("-", "").ToUpperInvariant();
+    }
+
+    private PasswordReportDto MapToDto(string rawPassword, PasswordAudit audit)
+    {
         return new PasswordReportDto
         {
-            MaskedPassword = masked,
-            Score = score,
-            ScoreText = $"{score}/4",
-            EntropyBits = Math.Round(entropy, 2),
-            CrackTimeSeconds = crackSeconds,
-            CrackTimeDisplay = crackDisplay,
-            PwnedCount = pwnedCount,
-            IsPwned = pwnedCount > 0,
-            Summary = summary
+            MaskedPassword = Mask(rawPassword),
+            Score = audit.Score,
+            ScoreText = $"{audit.Score}/4",
+            EntropyBits = Math.Round(audit.Entropy, 2),
+            CrackTimeDisplay = audit.CrackTimeDisplay,
+            PwnedCount = audit.PwnedCount,
+            IsPwned = audit.PwnedCount > 0,
+            Summary = audit.PwnedCount > 0
+                ? $"Seen {audit.PwnedCount} times in breaches."
+                : "Not found in known breach datasets."
         };
     }
 
