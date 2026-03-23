@@ -17,6 +17,7 @@ namespace CyberBrief.Context
         ///Email Cheacking
         public DbSet<Result> Results { get; set; }
         public DbSet<Found> Founds {  get; set; }
+        public DbSet<EmailVerification> EmailVerifications { get; set; }
         //pass check
         public DbSet<PasswordAudit> PasswordAudits { get; set; }
 

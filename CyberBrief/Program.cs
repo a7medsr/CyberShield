@@ -1,6 +1,7 @@
 using CyberBrief.Context;
 using CyberBrief.Services;
 using CyberBrief.Services;
+using CyberBrief.Services.Email_sending;
 using CyberBrief.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -69,6 +70,7 @@ namespace CyberBrief
             });
 
             // inside Main or builder setup
+            builder.Services.AddTransient<IEmailService, EmailService>();
             builder.Services.AddHttpClient<PasswordInspectorService>();
             builder.Services.AddScoped<PasswordInspectorService>();
             builder.Services.AddScoped<ContainerServices>();
