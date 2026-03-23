@@ -1,6 +1,7 @@
 using CyberBrief.Context;
 using CyberBrief.Services;
 using CyberBrief.Services;
+using CyberBrief.Services.Email_sending;
 using CyberBrief.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -51,21 +52,25 @@ namespace CyberBrief
             #endregion
 
             #region Email chick
-            builder.Services.AddSingleton<BreachDirectoryService>(sp =>
+            builder.Services.AddHttpClient<BreachDirectoryService>(client =>
             {
-                var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-                var httpClient = httpClientFactory.CreateClient();
-                httpClient.BaseAddress = new Uri("https://breachdirectory.p.rapidapi.com/");
-                httpClient.DefaultRequestHeaders.Add("x-rapidapi-host", "breachdirectory.p.rapidapi.com");
-                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("bransh/1.0");
+                client.BaseAddress = new Uri("https://breachdirectory.p.rapidapi.com/");
+                client.DefaultRequestHeaders.Add("x-rapidapi-host", "breachdirectory.p.rapidapi.com");
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("bransh/1.0");
+            });
 
-                return new BreachDirectoryService(
-                    httpClient,
-                    "cd849227fcmsha0865829942a226p196270jsnd1890868e127"
-                );
+            // Register as Scoped because it uses a DbContext
+            builder.Services.AddScoped<BreachDirectoryService>(sp =>
+            {
+                var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(BreachDirectoryService));
+                var context = sp.GetRequiredService<CyberBriefDbContext>();
+                var apiKey = "cd849227fcmsha0865829942a226p196270jsnd1890868e127";
+
+                return new BreachDirectoryService(httpClient, apiKey, context);
             });
 
             // inside Main or builder setup
+            builder.Services.AddTransient<IEmailService, EmailService>();
             builder.Services.AddHttpClient<PasswordInspectorService>();
             builder.Services.AddScoped<PasswordInspectorService>();
             builder.Services.AddScoped<ContainerServices>();
@@ -76,12 +81,7 @@ namespace CyberBrief
 
             #region Sandbox
             builder.Services.AddHttpClient<TriageService>();
-            builder.Services.AddScoped<TriageService>(sp =>
-            {
-                var httpClient = sp.GetRequiredService<HttpClient>();
-                var config = sp.GetRequiredService<IConfiguration>();
-                return new TriageService(httpClient, config);
-            });
+            
             #endregion
 
 

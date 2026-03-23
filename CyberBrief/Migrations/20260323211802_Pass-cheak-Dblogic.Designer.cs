@@ -4,6 +4,7 @@ using CyberBrief.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CyberBrief.Migrations
 {
     [DbContext(typeof(CyberBriefDbContext))]
-    partial class CyberBriefDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260323211802_Pass-cheak-Dblogic")]
+    partial class PasscheakDblogic
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,26 +24,6 @@ namespace CyberBrief.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("CyberBrief.Models.Email_Checking.EmailVerification", b =>
-                {
-                    b.Property<string>("Email")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTime>("Expiry")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsVerified")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("OtpCode")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("Email");
-
-                    b.ToTable("EmailVerifications");
-                });
 
             modelBuilder.Entity("CyberBrief.Models.Email_Checking.Found", b =>
                 {
@@ -118,33 +101,6 @@ namespace CyberBrief.Migrations
                     b.HasKey("PasswordHash");
 
                     b.ToTable("PasswordAudits");
-                });
-
-            modelBuilder.Entity("CyberBrief.Models.TriageCache", b =>
-                {
-                    b.Property<string>("ResourceHash")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("RawJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("SampleId")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int?>("Score")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("ResourceHash");
-
-                    b.ToTable("TriageCaches");
                 });
 
             modelBuilder.Entity("Image", b =>
