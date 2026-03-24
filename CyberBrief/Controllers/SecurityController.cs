@@ -40,14 +40,14 @@ namespace CyberBrief.Controllers
         //    _context = context;
         //}
 
-        // STEP 1: Request OTP
-        [HttpPost("request-otp")]
+        
+        [HttpPost("request-otp-for-email")]
         public async Task<IActionResult> RequestOtp(string email)
         {
             if (string.IsNullOrWhiteSpace(email))
                 return BadRequest(new { message = "Email is required." });
 
-            // Generate 6-digit OTP
+            
             var otp = new Random().Next(100000, 999999).ToString();
 
             // Save to Database (Upsert logic)

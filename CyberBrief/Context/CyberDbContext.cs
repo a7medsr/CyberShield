@@ -20,6 +20,8 @@ namespace CyberBrief.Context
         public DbSet<EmailVerification> EmailVerifications { get; set; }
         //pass check
         public DbSet<PasswordAudit> PasswordAudits { get; set; }
+        //triage
+        public DbSet<TriageCache> TriageCaches { get; set; }
 
         
         protected override void OnModelCreating(ModelBuilder modelBuilder)

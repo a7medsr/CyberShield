@@ -81,12 +81,7 @@ namespace CyberBrief
 
             #region Sandbox
             builder.Services.AddHttpClient<TriageService>();
-            builder.Services.AddScoped<TriageService>(sp =>
-            {
-                var httpClient = sp.GetRequiredService<HttpClient>();
-                var config = sp.GetRequiredService<IConfiguration>();
-                return new TriageService(httpClient, config);
-            });
+            
             #endregion
 
 
