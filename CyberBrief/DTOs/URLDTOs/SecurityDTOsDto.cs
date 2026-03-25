@@ -72,4 +72,39 @@ namespace CyberBrief.Models
         [JsonPropertyName("threatEntryType")]
         public string ThreatEntryType { get; set; } = string.Empty;
     }
+    public class UrlPredictionResponse
+    {
+        [JsonPropertyName("url")]
+        public string Url { get; set; } = string.Empty;
+
+        [JsonPropertyName("verdict")]
+        public string Verdict { get; set; } = string.Empty;
+
+        [JsonPropertyName("confidence")]
+        public double Confidence { get; set; }
+
+        [JsonPropertyName("layer")]
+        public string Layer { get; set; } = string.Empty;
+
+        [JsonPropertyName("probabilities")]
+        public UrlPredictionProbabilities Probabilities { get; set; } = new();
+
+        [JsonPropertyName("flags")]
+        public List<string> Flags { get; set; } = new();
+
+        [JsonPropertyName("latency_ms")]
+        public double LatencyMs { get; set; }
+    }
+
+    public class UrlPredictionProbabilities
+    {
+        [JsonPropertyName("malware")]
+        public double Malware { get; set; }
+
+        [JsonPropertyName("phishing")]
+        public double Phishing { get; set; }
+
+        [JsonPropertyName("safe")]
+        public double Safe { get; set; }
+    }
 }

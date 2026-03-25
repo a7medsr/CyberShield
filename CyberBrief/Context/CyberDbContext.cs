@@ -1,6 +1,7 @@
 ﻿using  CyberBrief.Models;
 using CyberBrief.Models.Email_Checking;
 using CyberBrief.Models.PassordCheaking;
+using CyberBrief.Models.Url_shalow_scanning;
 using CyberBrief.Models.Web_Scaning;
 using Microsoft.EntityFrameworkCore;
 
@@ -25,6 +26,8 @@ namespace CyberBrief.Context
         public DbSet<TriageCache> TriageCaches { get; set; }
         //web scaning 
         public DbSet<ScanRecord> ScanRecords { get; set; }
+        //shalow url scannign 
+        public DbSet<UrlAnalysisRecord> UrlAnalysisRecords { get; set; }
 
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)

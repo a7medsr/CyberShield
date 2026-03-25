@@ -1,6 +1,9 @@
-﻿using CyberBrief.Services.IServices;
+﻿using CyberBrief.Context;
+using CyberBrief.Models.Url_shalow_scanning;
+using CyberBrief.Services.IServices;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 namespace CyberBrief.Controllers
 {
@@ -9,10 +12,12 @@ namespace CyberBrief.Controllers
     public class UrlExpanderController : ControllerBase
     {
         private readonly IUrlExpanderService _urlExpanderService;
+        private readonly CyberBriefDbContext _db;
 
-        public UrlExpanderController(IUrlExpanderService urlExpanderService)
+        public UrlExpanderController(IUrlExpanderService urlExpanderService, CyberBriefDbContext db)
         {
             _urlExpanderService = urlExpanderService;
+            _db = db;
         }
 
         [HttpGet("extract")]
@@ -21,9 +26,12 @@ namespace CyberBrief.Controllers
             try
             {
                 if (string.IsNullOrWhiteSpace(url))
-                {
                     return BadRequest(new { error = "No URL provided" });
-                }
+
+                // Check if we already have a result for this URL
+                var cached = await _db.UrlAnalysisRecords.FindAsync(url);
+                if (cached is not null)
+                    return Ok(JsonSerializer.Deserialize<object>(cached.ResultJson));
 
                 var result = await _urlExpanderService.ExtractShortUrlAsync(url);
 
@@ -37,8 +45,8 @@ namespace CyberBrief.Controllers
                     });
                 }
 
-                // Return comprehensive response
-                return Ok(new
+                // Build the response object
+                var response = new
                 {
                     Status = "Success",
                     OriginalURL = url,
@@ -56,18 +64,23 @@ namespace CyberBrief.Controllers
                         RedFlagCount = result.SafetyAnalysis?.RedFlags?.Count ?? 0
                     },
                     ProcessedAt = DateTime.UtcNow
+                };
+
+                // Save to DB
+                _db.UrlAnalysisRecords.Add(new UrlAnalysisRecord
+                {
+                    Url = url,
+                    ResultJson = JsonSerializer.Serialize(response),
+                    AnalyzedAt = DateTime.UtcNow
                 });
+                await _db.SaveChangesAsync();
+
+                return Ok(response);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new
-                {
-                    error = "Internal server error",
-                    message = ex.Message
-                });
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
             }
         }
-
-   
     }
 }
