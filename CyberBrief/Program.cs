@@ -3,6 +3,7 @@ using CyberBrief.Services;
 using CyberBrief.Services;
 using CyberBrief.Services.Email_sending;
 using CyberBrief.Services.IServices;
+using CyberBrief.Services.Web_scan_services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Options;
@@ -67,6 +68,10 @@ namespace CyberBrief
                 var apiKey = "cd849227fcmsha0865829942a226p196270jsnd1890868e127";
 
                 return new BreachDirectoryService(httpClient, apiKey, context);
+            });
+            builder.Services.AddHttpClient<IScanService, ScanService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(10);
             });
 
             // inside Main or builder setup

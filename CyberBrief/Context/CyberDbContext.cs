@@ -1,7 +1,8 @@
-﻿using Microsoft.EntityFrameworkCore;
-using  CyberBrief.Models;
+﻿using  CyberBrief.Models;
 using CyberBrief.Models.Email_Checking;
 using CyberBrief.Models.PassordCheaking;
+using CyberBrief.Models.Web_Scaning;
+using Microsoft.EntityFrameworkCore;
 
 namespace CyberBrief.Context
 {
@@ -22,8 +23,10 @@ namespace CyberBrief.Context
         public DbSet<PasswordAudit> PasswordAudits { get; set; }
         //triage
         public DbSet<TriageCache> TriageCaches { get; set; }
+        //web scaning 
+        public DbSet<ScanRecord> ScanRecords { get; set; }
 
-        
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.Entity<Summary>()
