@@ -4,6 +4,7 @@ using CyberBrief.Context;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CyberBrief.Migrations
 {
     [DbContext(typeof(CyberBriefDbContext))]
-    partial class CyberBriefDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260326104025_AddUserUrlScans")]
+    partial class AddUserUrlScans
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -21,51 +24,6 @@ namespace CyberBrief.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
-
-            modelBuilder.Entity("BaseUserImage", b =>
-                {
-                    b.Property<string>("ContainerScansId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("UsersId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.HasKey("ContainerScansId", "UsersId");
-
-                    b.HasIndex("UsersId");
-
-                    b.ToTable("UserContainerScans", (string)null);
-                });
-
-            modelBuilder.Entity("BaseUserScanRecord", b =>
-                {
-                    b.Property<string>("UsersId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("WebScansId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.HasKey("UsersId", "WebScansId");
-
-                    b.HasIndex("WebScansId");
-
-                    b.ToTable("UserWebScans", (string)null);
-                });
-
-            modelBuilder.Entity("BaseUserTriageCache", b =>
-                {
-                    b.Property<string>("TriageScansResourceHash")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.Property<string>("UsersId")
-                        .HasColumnType("nvarchar(450)");
-
-                    b.HasKey("TriageScansResourceHash", "UsersId");
-
-                    b.HasIndex("UsersId");
-
-                    b.ToTable("UserTriageScans", (string)null);
-                });
 
             modelBuilder.Entity("BaseUserUrlAnalysisRecord", b =>
                 {
@@ -572,51 +530,6 @@ namespace CyberBrief.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Vulnerabilities");
-                });
-
-            modelBuilder.Entity("BaseUserImage", b =>
-                {
-                    b.HasOne("Image", null)
-                        .WithMany()
-                        .HasForeignKey("ContainerScansId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CyberBrief.Models.User.BaseUser", null)
-                        .WithMany()
-                        .HasForeignKey("UsersId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("BaseUserScanRecord", b =>
-                {
-                    b.HasOne("CyberBrief.Models.User.BaseUser", null)
-                        .WithMany()
-                        .HasForeignKey("UsersId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CyberBrief.Models.Web_Scaning.ScanRecord", null)
-                        .WithMany()
-                        .HasForeignKey("WebScansId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("BaseUserTriageCache", b =>
-                {
-                    b.HasOne("CyberBrief.Models.TriageCache", null)
-                        .WithMany()
-                        .HasForeignKey("TriageScansResourceHash")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("CyberBrief.Models.User.BaseUser", null)
-                        .WithMany()
-                        .HasForeignKey("UsersId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("BaseUserUrlAnalysisRecord", b =>

@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using CyberBrief.Models.User;
+using System.ComponentModel.DataAnnotations;
 
 namespace CyberBrief.Models.Web_Scaning
 {
@@ -17,5 +18,7 @@ namespace CyberBrief.Models.Web_Scaning
         public byte[]? PdfReport { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public ICollection<BaseUser> Users { get; set; } = new List<BaseUser>();
+
     }
 }

@@ -1,8 +1,10 @@
 ﻿using CyberBrief.Context;
 using CyberBrief.Models.Url_shalow_scanning;
 using CyberBrief.Services.IServices;
-using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 using System.Text.Json;
 
 namespace CyberBrief.Controllers
@@ -21,6 +23,7 @@ namespace CyberBrief.Controllers
         }
 
         [HttpGet("extract")]
+        [Authorize]  // ← added
         public async Task<IActionResult> Extract([FromQuery] string url)
         {
             try
@@ -28,10 +31,17 @@ namespace CyberBrief.Controllers
                 if (string.IsNullOrWhiteSpace(url))
                     return BadRequest(new { error = "No URL provided" });
 
-                // Check if we already have a result for this URL
-                var cached = await _db.UrlAnalysisRecords.FindAsync(url);
+                var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                var cached = await _db.UrlAnalysisRecords
+                    .Include(r => r.Users)
+                    .FirstOrDefaultAsync(r => r.Url == url);
+
                 if (cached is not null)
+                {
+                    await LinkToUserAsync(cached, userId);
                     return Ok(JsonSerializer.Deserialize<object>(cached.ResultJson));
+                }
 
                 var result = await _urlExpanderService.ExtractShortUrlAsync(url);
 
@@ -45,7 +55,6 @@ namespace CyberBrief.Controllers
                     });
                 }
 
-                // Build the response object
                 var response = new
                 {
                     Status = "Success",
@@ -66,14 +75,17 @@ namespace CyberBrief.Controllers
                     ProcessedAt = DateTime.UtcNow
                 };
 
-                // Save to DB
-                _db.UrlAnalysisRecords.Add(new UrlAnalysisRecord
+                var record = new UrlAnalysisRecord
                 {
                     Url = url,
                     ResultJson = JsonSerializer.Serialize(response),
                     AnalyzedAt = DateTime.UtcNow
-                });
+                };
+
+                _db.UrlAnalysisRecords.Add(record);
                 await _db.SaveChangesAsync();
+
+                await LinkToUserAsync(record, userId);
 
                 return Ok(response);
             }
@@ -81,6 +93,52 @@ namespace CyberBrief.Controllers
             {
                 return StatusCode(500, new { error = "Internal server error", message = ex.Message });
             }
+        }
+
+        [HttpGet("my-history")]
+        [Authorize]
+        public async Task<IActionResult> MyHistory()
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            // ← fetch first, then deserialize in memory (fixes CS0854)
+            var records = await _db.UrlAnalysisRecords
+                .Include(r => r.Users)
+                .Where(r => r.Users.Any(u => u.Id == userId))
+                .OrderByDescending(r => r.AnalyzedAt)
+                .Select(r => new
+                {
+                    r.Url,
+                    r.AnalyzedAt,
+                    r.ResultJson      // ← pull raw string from DB
+                })
+                .ToListAsync();
+
+            // ← deserialize AFTER the query, in memory
+            var result = records.Select(r => new
+            {
+                r.Url,
+                r.AnalyzedAt,
+                Result = JsonSerializer.Deserialize<object>(r.ResultJson)
+            });
+
+            return Ok(result);
+        }
+
+        // ── private helper ────────────────────────────────────────────────────
+        private async Task LinkToUserAsync(UrlAnalysisRecord record, string? userId)
+        {
+            if (userId is null) return;
+
+            // avoid duplicate link
+            var alreadyLinked = record.Users.Any(u => u.Id == userId);
+            if (alreadyLinked) return;
+
+            var user = await _db.Users.FindAsync(userId);
+            if (user is null) return;
+
+            record.Users.Add(user);
+            await _db.SaveChangesAsync();
         }
     }
 }

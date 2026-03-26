@@ -38,8 +38,25 @@ namespace CyberBrief.Context
             modelBuilder.Entity<Summary>()
                 .HasMany(s => s.Vulnerabilities)
                 .WithMany(v => v.Summaries)
-                .UsingEntity(j => j.ToTable("SummaryVulnerabilities")); 
+                .UsingEntity(j => j.ToTable("SummaryVulnerabilities"));
 
+            modelBuilder.Entity<BaseUser>()
+                .HasMany(u => u.ScannedUrls)
+                .WithMany(r => r.Users)
+                .UsingEntity(j => j.ToTable("UserUrlScans"));
+
+            modelBuilder.Entity<BaseUser>()
+               .HasMany(u => u.TriageScans)
+               .WithMany(t => t.Users)
+               .UsingEntity(j => j.ToTable("UserTriageScans"));
+            modelBuilder.Entity<BaseUser>()
+                .HasMany(u => u.ContainerScans)
+                .WithMany(i => i.Users)
+                .UsingEntity(j => j.ToTable("UserContainerScans"));
+            modelBuilder.Entity<BaseUser>()
+                .HasMany(u => u.WebScans)
+                .WithMany(s => s.Users)
+                .UsingEntity(j => j.ToTable("UserWebScans"));
 
         }
     }

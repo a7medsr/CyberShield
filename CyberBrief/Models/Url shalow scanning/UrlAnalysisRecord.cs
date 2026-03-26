@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿using CyberBrief.Models.User;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace CyberBrief.Models.Url_shalow_scanning
@@ -12,6 +13,8 @@ namespace CyberBrief.Models.Url_shalow_scanning
         public string ResultJson { get; set; } = string.Empty;
 
         public DateTime AnalyzedAt { get; set; } = DateTime.UtcNow;
+        // add this to BaseUser.cs
+        public ICollection<BaseUser> Users { get; set; } = new List<BaseUser>();
 
     }
 }
