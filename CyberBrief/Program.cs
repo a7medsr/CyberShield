@@ -1,4 +1,4 @@
-using CyberBrief.Context;
+﻿using CyberBrief.Context;
 using CyberBrief.Repository;
 using CyberBrief.Services;
 using CyberBrief.Services.Email_sending;
@@ -21,18 +21,32 @@ namespace CyberBrief
         {
             var builder = WebApplication.CreateBuilder(args);
 
+            #region CORS
+            builder.Services.AddCors(options =>
+            {
+                options.AddPolicy("AllowAll", policy =>
+                {
+                    policy
+                        .AllowAnyOrigin()
+                        .AllowAnyMethod()
+                        .AllowAnyHeader();
+                });
+            });
+            #endregion
+
             #region Database
             builder.Services.AddDbContext<CyberBriefDbContext>(options =>
                 options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
             #endregion
 
             #region Identity
-            builder.Services.AddIdentity<BaseUser, IdentityRole>(options =>
+            builder.Services.AddIdentityCore<BaseUser>(options =>
             {
                 options.Password.RequiredLength = 8;
                 options.User.RequireUniqueEmail = true;
                 options.SignIn.RequireConfirmedEmail = true;
             })
+            .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<CyberBriefDbContext>()
             .AddDefaultTokenProviders();
             #endregion
@@ -44,6 +58,7 @@ namespace CyberBrief
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
             })
             .AddJwtBearer(options =>
             {
@@ -152,7 +167,9 @@ namespace CyberBrief
 
             app.UseHttpsRedirection();
 
-            app.UseAuthentication(); // ? must be before UseAuthorization
+            app.UseCors("AllowAll");       // ← must be before auth
+
+            app.UseAuthentication();
             app.UseAuthorization();
 
             app.MapControllers();
