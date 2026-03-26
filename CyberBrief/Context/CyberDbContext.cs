@@ -4,10 +4,12 @@ using CyberBrief.Models.PassordCheaking;
 using CyberBrief.Models.Url_shalow_scanning;
 using CyberBrief.Models.Web_Scaning;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using CyberBrief.Models.User;
 
 namespace CyberBrief.Context
 {
-    public class CyberBriefDbContext : DbContext
+    public class CyberBriefDbContext : IdentityDbContext<BaseUser>
     {
         public CyberBriefDbContext(DbContextOptions<CyberBriefDbContext> options) : base(options)
         {
@@ -32,10 +34,13 @@ namespace CyberBrief.Context
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            base.OnModelCreating(modelBuilder);
             modelBuilder.Entity<Summary>()
                 .HasMany(s => s.Vulnerabilities)
                 .WithMany(v => v.Summaries)
                 .UsingEntity(j => j.ToTable("SummaryVulnerabilities")); 
+
+
         }
     }
 }

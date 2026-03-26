@@ -12,5 +12,6 @@ namespace CyberBrief.Models.Url_shalow_scanning
         public string ResultJson { get; set; } = string.Empty;
 
         public DateTime AnalyzedAt { get; set; } = DateTime.UtcNow;
+
     }
 }

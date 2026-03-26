@@ -1,15 +1,16 @@
 using CyberBrief.Context;
-using CyberBrief.Services;
+using CyberBrief.Repository;
 using CyberBrief.Services;
 using CyberBrief.Services.Email_sending;
 using CyberBrief.Services.IServices;
+using CyberBrief.Services.User;
 using CyberBrief.Services.Web_scan_services;
+using CyberBrief.Models.User;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
-using System.Net.Http.Headers;
-using System.Net.Http.Headers;
 using System.Text;
 
 namespace CyberBrief
@@ -20,39 +21,81 @@ namespace CyberBrief
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Add services to the container.
-            #region Url short expander
-            // Add services to the container.
-            // Configure HttpClient for URL expansion (no auto-redirect)
+            #region Database
+            builder.Services.AddDbContext<CyberBriefDbContext>(options =>
+                options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
+            #endregion
+
+            #region Identity
+            builder.Services.AddIdentity<BaseUser, IdentityRole>(options =>
+            {
+                options.Password.RequiredLength = 8;
+                options.User.RequireUniqueEmail = true;
+                options.SignIn.RequireConfirmedEmail = true;
+            })
+            .AddEntityFrameworkStores<CyberBriefDbContext>()
+            .AddDefaultTokenProviders();
+            #endregion
+
+            #region JWT
+            var jwtKey = builder.Configuration["Jwt:Key"]!;
+
+            builder.Services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                    ValidAudience = builder.Configuration["Jwt:Audience"],
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+                };
+            });
+            #endregion
+
+            #region User services
+            builder.Services.AddHttpContextAccessor();
+            builder.Services.AddScoped<IUserRepository, UserRepository>();
+            builder.Services.AddScoped<IAuthService, AuthService>();
+            builder.Services.AddTransient<IEmailService, EmailService>();
+            #endregion
+
+            #region URL expander
             builder.Services.AddHttpClient<IUrlExpanderService, UrlExpanderService>(client =>
             {
                 client.Timeout = TimeSpan.FromSeconds(30);
                 client.DefaultRequestHeaders.Add("User-Agent", "CyberShield-URLAnalyzer/1.0");
             })
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
             {
-                AllowAutoRedirect = false // IMPORTANT: We handle redirects manually
+                AllowAutoRedirect = false
             });
 
-            // Configure HttpClient for safety analysis
             builder.Services.AddHttpClient<ISafetyAnalyzerService, AdvancedSafetyAnalyzerService>(client =>
             {
                 client.Timeout = TimeSpan.FromSeconds(15);
                 client.DefaultRequestHeaders.Add("User-Agent", "CyberShield-SecurityAnalyzer/1.0");
             });
+
             builder.Services.AddHttpClient<CVEexplanationService>(client =>
             {
                 client.Timeout = TimeSpan.FromMinutes(5);
             });
 
-            // Register services
             builder.Services.AddScoped<IUrlExpanderService, UrlExpanderService>();
             builder.Services.AddScoped<ISafetyAnalyzerService, AdvancedSafetyAnalyzerService>();
             builder.Services.AddScoped<ICVEexplanationService, CVEexplanationService>();
             builder.Services.AddScoped<IContainerServices, ContainerServices>();
             #endregion
 
-            #region Email chick
+            #region Email breach
             builder.Services.AddHttpClient<BreachDirectoryService>(client =>
             {
                 client.BaseAddress = new Uri("https://breachdirectory.p.rapidapi.com/");
@@ -60,72 +103,59 @@ namespace CyberBrief
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("bransh/1.0");
             });
 
-            // Register as Scoped because it uses a DbContext
             builder.Services.AddScoped<BreachDirectoryService>(sp =>
             {
-                var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(BreachDirectoryService));
+                var httpClient = sp.GetRequiredService<IHttpClientFactory>()
+                                   .CreateClient(nameof(BreachDirectoryService));
                 var context = sp.GetRequiredService<CyberBriefDbContext>();
                 var apiKey = "cd849227fcmsha0865829942a226p196270jsnd1890868e127";
-
                 return new BreachDirectoryService(httpClient, apiKey, context);
             });
+
             builder.Services.AddHttpClient<IScanService, ScanService>(client =>
             {
                 client.Timeout = TimeSpan.FromMinutes(10);
             });
 
-            // inside Main or builder setup
-            builder.Services.AddTransient<IEmailService, EmailService>();
             builder.Services.AddHttpClient<PasswordInspectorService>();
             builder.Services.AddScoped<PasswordInspectorService>();
             builder.Services.AddScoped<ContainerServices>();
             builder.Services.AddScoped<CVEexplanationService>();
-
-
             #endregion
 
             #region Sandbox
             builder.Services.AddHttpClient<TriageService>();
-            
             #endregion
 
-
-            builder.Services.AddDbContext<CyberBriefDbContext>(options => options.UseSqlServer(builder.Configuration.GetConnectionString("local")));
-
-            builder.Services.AddControllers();
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-            builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen();
+            #region Infrastructure
             builder.Services.AddHttpClient("ContainerScanner", client =>
             {
                 client.BaseAddress = new Uri("https://containerscanner.tecisfun.cloud/");
                 client.Timeout = TimeSpan.FromMinutes(2);
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("CyberBrief-App/1.0");
             });
+
+            builder.Services.AddControllers();
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen();
+            #endregion
+
             var app = builder.Build();
 
-            // Configure the HTTP request pipeline.
-            // if (app.Environment.IsDevelopment())
-            // {
-            //     app.UseSwagger();
-            //     app.UseSwaggerUI();
-            // }
             app.UseSwagger(opt => opt.RouteTemplate = "openapi/{documentName}.json");
             app.MapScalarApiReference(opt =>
             {
-                opt.Title = "AutoGrad API Documentation";
+                opt.Title = "CyberBrief API Documentation";
                 opt.Theme = ScalarTheme.Default;
                 opt.DefaultHttpClient = new(ScalarTarget.Http, ScalarClient.Http11);
             });
-           
 
             app.UseHttpsRedirection();
 
+            app.UseAuthentication(); // ? must be before UseAuthorization
             app.UseAuthorization();
 
-
             app.MapControllers();
-
             app.Run();
         }
     }
