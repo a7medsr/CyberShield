@@ -148,7 +148,7 @@ namespace CyberBrief.Controllers
                     });
                 }
 
-                // Ask Triage API for live status
+               
                 var rawJson = await _triageService.GetSampleAsync(id);
                 using var doc = JsonDocument.Parse(rawJson);
                 var root = doc.RootElement;
@@ -157,6 +157,13 @@ namespace CyberBrief.Controllers
 
                 if (status == "reported")
                 {
+                    var record = await _db.TriageCaches.FirstOrDefaultAsync(t => t.SampleId == id);
+                    if (record != null && record.Status != "reported")
+                    {
+                        record.Status = "reported";
+                        await _db.SaveChangesAsync();
+                    }
+
                     return Ok(new
                     {
                         success = true,
@@ -166,12 +173,11 @@ namespace CyberBrief.Controllers
                     });
                 }
 
-                // Still running
                 return Ok(new
                 {
                     success = true,
                     sampleId = id,
-                    status,   // e.g. "pending", "running"
+                    status,   
                     message = "Scan is still in progress. Please poll again shortly."
                 });
             }
