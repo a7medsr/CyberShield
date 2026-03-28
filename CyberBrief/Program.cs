@@ -167,7 +167,7 @@ namespace CyberBrief
 
             app.UseHttpsRedirection();
 
-            app.UseCors("AllowAll");       // ← must be before auth
+            app.UseCors("AllowAll");      
 
             app.UseAuthentication();
             app.UseAuthorization();

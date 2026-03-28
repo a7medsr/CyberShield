@@ -25,49 +25,40 @@ namespace CyberBrief.Services
             _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
 
-        public async Task<string> ProcessUrlAsync(string url)
-        {
-            // USE URL AS PRIMARY KEY
-            string urlId = url.ToLower().Trim().TrimEnd('/');
+        // ── Public: raw submission (controller handles caching logic) ─────────
 
-            var cached = await _context.TriageCaches.FirstOrDefaultAsync(x => x.ResourceHash == urlId);
+        /// <summary>
+        /// Submits a URL to Triage and returns the raw JSON response.
+        /// Caching and DB logic is handled by the controller.
+        /// </summary>
+        public Task<string> SubmitUrlRawAsync(string url) => SubmitUrlAsync(url);
 
-            if (cached != null)
-            {
-                if (cached.Status == "reported" && !string.IsNullOrEmpty(cached.RawJson))
-                {
-                    return cached.RawJson;
-                }
-                // If pending, just return the submission response stored or fetch report
-                var report = await GetFullReportAsync(cached.SampleId);
-                return JsonSerializer.Serialize(report);
-            }
-
-            // SUBMIT NEW URL
-            var response = await SubmitUrlAsync(url);
-            using var doc = JsonDocument.Parse(response);
-            string sampleId = doc.RootElement.GetProperty("id").GetString();
-
-            _context.TriageCaches.Add(new TriageCache
-            {
-                ResourceHash = urlId,
-                SampleId = sampleId,
-                Status = "pending",
-                CreatedAt = DateTime.UtcNow
-            });
-
-            await _context.SaveChangesAsync();
-            return response;
-        }
-
-        // PROCESS FILE DIRECTLY (NO HASHING)
-        public async Task<string> ProcessFileAsync(IFormFile file)
+        /// <summary>
+        /// Submits a file to Triage and returns the raw JSON response.
+        /// </summary>
+        public Task<string> ProcessFileAsync(IFormFile file)
         {
             if (file == null) throw new ArgumentNullException(nameof(file));
-            return await SubmitFileAsync(file);
+            return SubmitFileAsync(file);
         }
 
-        public async Task<TriageReportDto> GetFullReportAsync(string sampleId)
+        /// <summary>
+        /// Fetches the live sample status from Triage.
+        /// Returns the raw JSON so the controller can extract what it needs.
+        /// </summary>
+        public async Task<string> GetSampleAsync(string sampleId)
+        {
+            var response = await _httpClient.GetAsync($"samples/{sampleId}");
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStringAsync();
+        }
+
+        /// <summary>
+        /// Fetches the full overview report and maps it to TriageReportDto.
+        /// Also updates the DB cache record to status "reported".
+        /// Returns null if the overview endpoint fails.
+        /// </summary>
+        public async Task<TriageReportDto?> GetFullReportAsync(string sampleId)
         {
             var response = await _httpClient.GetAsync($"samples/{sampleId}/overview.json");
             if (!response.IsSuccessStatusCode) return null;
@@ -85,13 +76,16 @@ namespace CyberBrief.Services
                 Target = sampleEl.TryGetProperty("target", out var t) ? t.GetString() : "Unknown",
             };
 
-            // Extract Tags
-            if (root.TryGetProperty("analysis", out var analysis) && analysis.TryGetProperty("tags", out var tags))
+            // Tags
+            if (root.TryGetProperty("analysis", out var analysis) &&
+                analysis.TryGetProperty("tags", out var tags))
             {
-                report.Tags = tags.EnumerateArray().Select(x => x.GetString()!).ToList();
+                report.Tags = tags.EnumerateArray()
+                    .Select(x => x.GetString()!)
+                    .ToList();
             }
 
-            // Extract High Risk Signatures (Score >= 3)
+            // High Risk Signatures (score >= 3)
             if (root.TryGetProperty("signatures", out var sigs))
             {
                 foreach (var sig in sigs.EnumerateArray())
@@ -109,8 +103,10 @@ namespace CyberBrief.Services
                 }
             }
 
-            // Save to DB when reported
-            var cacheRecord = await _context.TriageCaches.FirstOrDefaultAsync(x => x.SampleId == sampleId);
+            // Persist to DB cache
+            var cacheRecord = await _context.TriageCaches
+                .FirstOrDefaultAsync(x => x.SampleId == sampleId);
+
             if (cacheRecord != null)
             {
                 cacheRecord.Status = "reported";
@@ -122,12 +118,13 @@ namespace CyberBrief.Services
             return report;
         }
 
-        // --- PRIVATE HELPERS ---
+        // ── Private Helpers ───────────────────────────────────────────────────
 
         private async Task<string> SubmitUrlAsync(string url)
         {
-            var payload = JsonSerializer.Serialize(new { kind = "url", url = url });
-            var response = await _httpClient.PostAsync("samples", new StringContent(payload, Encoding.UTF8, "application/json"));
+            var payload = JsonSerializer.Serialize(new { kind = "url", url });
+            var response = await _httpClient.PostAsync("samples",
+                new StringContent(payload, Encoding.UTF8, "application/json"));
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadAsStringAsync();
         }
@@ -137,17 +134,11 @@ namespace CyberBrief.Services
             using var content = new MultipartFormDataContent();
             var streamContent = new StreamContent(file.OpenReadStream());
             content.Add(streamContent, "file", file.FileName);
-            content.Add(new StringContent(JsonSerializer.Serialize(new { kind = "file" }), Encoding.UTF8, "application/json"), "_json");
+            content.Add(new StringContent(
+                JsonSerializer.Serialize(new { kind = "file" }),
+                Encoding.UTF8, "application/json"), "_json");
 
             var response = await _httpClient.PostAsync("samples", content);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadAsStringAsync();
-        }
-
-        // Restore this method since your controller is calling it (image_b76940.png)
-        public async Task<string> GetSampleAsync(string sampleId)
-        {
-            var response = await _httpClient.GetAsync($"samples/{sampleId}");
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadAsStringAsync();
         }
