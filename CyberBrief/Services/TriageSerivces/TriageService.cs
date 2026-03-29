@@ -6,7 +6,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
-namespace CyberBrief.Services
+namespace CyberBrief.Services.TriageSerivces
 {
     public class TriageService
     {

@@ -1,11 +1,13 @@
 ﻿using CyberBrief.Context;
+using CyberBrief.Models.User;
 using CyberBrief.Repository;
 using CyberBrief.Services;
+using CyberBrief.Services.Dashboard_Services;
 using CyberBrief.Services.Email_sending;
 using CyberBrief.Services.IServices;
+using CyberBrief.Services.TriageSerivces;
 using CyberBrief.Services.User;
 using CyberBrief.Services.Web_scan_services;
-using CyberBrief.Models.User;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -103,7 +105,7 @@ namespace CyberBrief
             {
                 client.Timeout = TimeSpan.FromMinutes(5);
             });
-
+            builder.Services.AddScoped<IDashboardService,DashboardService>();
             builder.Services.AddScoped<IUrlExpanderService, UrlExpanderService>();
             builder.Services.AddScoped<ISafetyAnalyzerService, AdvancedSafetyAnalyzerService>();
             builder.Services.AddScoped<ICVEexplanationService, CVEexplanationService>();

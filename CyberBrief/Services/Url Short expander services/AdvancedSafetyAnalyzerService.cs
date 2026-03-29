@@ -19,67 +19,220 @@ namespace CyberBrief.Services
         }
 
         public SafetyAnalysisResultDto AnalyzeUrlSafety(string finalUrl, List<string> redirectionChain)
-        {
-            return AnalyzeUrlSafetyAsync(finalUrl, redirectionChain).GetAwaiter().GetResult();
-        }
+            => AnalyzeUrlSafetyAsync(finalUrl, redirectionChain).GetAwaiter().GetResult();
 
-        public async Task<SafetyAnalysisResultDto> AnalyzeUrlSafetyAsync(string finalUrl, List<string> redirectionChain)
+        public async Task<SafetyAnalysisResultDto> AnalyzeUrlSafetyAsync(
+            string finalUrl, List<string> redirectionChain)
         {
-            var result = new SafetyAnalysisResultDto
-            {
-                IsSafe = true,
-                SafetyLevel = "Unknown",
-                Message = "🔍 Analyzing URL safety..."
-            };
+            var result = new SafetyAnalysisResultDto();
 
             try
             {
-                // Step 1: Basic URL validation
                 if (!IsValidUrl(finalUrl))
                 {
                     result.IsSafe = false;
-                    result.SafetyLevel = "Dangerous";
-                    result.Message = "🚨 Invalid or malformed URL detected.";
-                    result.RedFlags.Add("Invalid URL format");
+                    result.VtScore = 4; result.GsbScore = 3; result.MlScore = 3; // max out = obvious bad
+                    result.RedFlags.Add("Invalid or malformed URL");
+                    ApplyFinalVerdict(result);
                     return result;
                 }
 
-                // Step 2: VirusTotal & Google Safe Browsing
-                await CheckWithVirusTotalAsync(result, finalUrl);
-                await CheckWithGoogleSafeBrowsingAsync(result, finalUrl);
+                // ── Step 1 & 2: VirusTotal + GSB run in parallel ──────────
+                await Task.WhenAll(
+                    ScoreVirusTotalAsync(result, finalUrl),
+                    ScoreGoogleSafeBrowsingAsync(result, finalUrl)
+                );
 
-                // If either flagged it → no need to run the model
-                if (result.RedFlags.Any())
-                {
-                    DetermineFinalSafety(result);
-                    return result;
-                }
+                // ── Step 3: ML model — skip if already condemned ──────────
+                bool alreadyFlagged = result.VtScore >= 3 || result.GsbScore >= 2;
+                if (!alreadyFlagged)
+                    await ScoreMlModelAsync(result, finalUrl);
+                else
+                    result.Warnings.Add("ML model skipped — threat already confirmed by external engines");
 
-                // Step 3: Both clean → run ML model
-                await CheckWithMlModelAsync(result, finalUrl);
-
-                // Step 4: Final determination
-                DetermineFinalSafety(result);
-
+                // ── Step 4: derive final verdict from score ───────────────
+                ApplyFinalVerdict(result);
                 return result;
             }
             catch (Exception ex)
             {
                 result.IsSafe = false;
                 result.SafetyLevel = "Unknown";
-                result.Message = "❓ Unable to complete safety analysis.";
+                result.Message = "Unable to complete safety analysis.";
                 result.Warnings.Add($"Analysis error: {ex.Message}");
                 return result;
             }
         }
 
-        private bool IsValidUrl(string url)
+        // ── Scoring helpers ───────────────────────────────────────────────
+
+        private async Task ScoreVirusTotalAsync(SafetyAnalysisResultDto result, string url)
         {
-            return Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
-                   (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+            try
+            {
+                var apiKey = _configuration["SecurityAnalysis:VirusTotal:ApiKey"];
+                var enabled = _configuration.GetValue<bool>("SecurityAnalysis:VirusTotal:Enabled");
+
+                if (!enabled || string.IsNullOrEmpty(apiKey))
+                {
+                    result.VtScore = 0; // benefit of the doubt
+                    result.Warnings.Add("VirusTotal check skipped (not configured)");
+                    return;
+                }
+
+                // Submit
+                var submitReq = new HttpRequestMessage(HttpMethod.Post,
+                    "https://www.virustotal.com/api/v3/urls")
+                {
+                    Content = new StringContent(
+                        $"url={Uri.EscapeDataString(url)}",
+                        Encoding.UTF8, "application/x-www-form-urlencoded")
+                };
+                submitReq.Headers.Add("x-apikey", apiKey);
+
+                var submitResp = await _httpClient.SendAsync(submitReq);
+                if (!submitResp.IsSuccessStatusCode)
+                {
+                    result.VtScore = 0;
+                    result.Warnings.Add($"VirusTotal submission failed: {submitResp.StatusCode}");
+                    return;
+                }
+
+                var submitData = JsonSerializer.Deserialize<VirusTotalSubmitResponse>(
+                    await submitResp.Content.ReadAsStringAsync());
+
+                if (submitData?.Data?.Id is null)
+                {
+                    result.VtScore = 0;
+                    result.Warnings.Add("VirusTotal: could not get analysis ID");
+                    return;
+                }
+
+                await Task.Delay(2000);
+
+                // Retrieve analysis
+                var analysisReq = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://www.virustotal.com/api/v3/analyses/{submitData.Data.Id}");
+                analysisReq.Headers.Add("x-apikey", apiKey);
+
+                var analysisResp = await _httpClient.SendAsync(analysisReq);
+                if (!analysisResp.IsSuccessStatusCode)
+                {
+                    result.VtScore = 0;
+                    result.Warnings.Add($"VirusTotal analysis retrieval failed: {analysisResp.StatusCode}");
+                    return;
+                }
+
+                var analysis = JsonSerializer.Deserialize<VirusTotalAnalysisResponse>(
+                    await analysisResp.Content.ReadAsStringAsync());
+
+                var stats = analysis?.Data?.Attributes?.Stats;
+                if (stats is null)
+                {
+                    result.VtScore = 0;
+                    result.Warnings.Add("VirusTotal: analysis still in progress or unavailable");
+                    return;
+                }
+
+                var totalEngines = stats.Harmless + stats.Malicious
+                                 + stats.Suspicious + stats.Undetected + stats.Timeout;
+                var flagged = stats.Malicious + stats.Suspicious;
+
+                // Ratio-based scoring: 1 noisy engine out of 95 ≠ dangerous
+                result.VtScore = flagged switch
+                {
+                    0 => 0,
+                    <= 2 => 1,
+                    <= 5 => 2,
+                    <= 10 => 3,
+                    _ => 4
+                };
+
+                var detail = $"VirusTotal: {flagged}/{totalEngines} engines flagged";
+                if (result.VtScore >= 2)
+                    result.RedFlags.Add(detail);
+                else if (result.VtScore == 1)
+                    result.Warnings.Add($"{detail} (low confidence — likely false positive)");
+                else
+                    result.Warnings.Add($"VirusTotal: scanned by {totalEngines} engines — clean");
+            }
+            catch (HttpRequestException ex) { result.VtScore = 0; result.Warnings.Add($"VirusTotal API error: {ex.Message}"); }
+            catch (TaskCanceledException) { result.VtScore = 0; result.Warnings.Add("VirusTotal API timeout"); }
+            catch (Exception ex) { result.VtScore = 0; result.Warnings.Add($"VirusTotal check failed: {ex.Message}"); }
         }
 
-        private async Task CheckWithMlModelAsync(SafetyAnalysisResultDto result, string url)
+        private async Task ScoreGoogleSafeBrowsingAsync(SafetyAnalysisResultDto result, string url)
+        {
+            try
+            {
+                var apiKey = _configuration["SecurityAnalysis:GoogleSafeBrowsing:ApiKey"];
+                var enabled = _configuration.GetValue<bool>("SecurityAnalysis:GoogleSafeBrowsing:Enabled");
+
+                if (!enabled || string.IsNullOrEmpty(apiKey))
+                {
+                    result.GsbScore = 0;
+                    result.Warnings.Add("Google Safe Browsing check skipped (not configured)");
+                    return;
+                }
+
+                var payload = new
+                {
+                    client = new { clientId = "CyberBrief", clientVersion = "1.0.0" },
+                    threatInfo = new
+                    {
+                        threatTypes = new[]
+                        {
+                            "MALWARE", "SOCIAL_ENGINEERING",
+                            "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION"
+                        },
+                        platformTypes = new[] { "ANY_PLATFORM" },
+                        threatEntryTypes = new[] { "URL" },
+                        threatEntries = new[] { new { url } }
+                    }
+                };
+
+                var response = await _httpClient.PostAsync(
+                    $"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={apiKey}",
+                    new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
+
+                var body = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    result.GsbScore = 0;
+                    result.Warnings.Add($"Google Safe Browsing error: {response.StatusCode}");
+                    return;
+                }
+
+                if (string.IsNullOrWhiteSpace(body) || body == "{}")
+                {
+                    result.GsbScore = 0;
+                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
+                    return;
+                }
+
+                var threatResp = JsonSerializer.Deserialize<GoogleSafeBrowsingThreatResponse>(body);
+                if (threatResp?.Matches is null || !threatResp.Matches.Any())
+                {
+                    result.GsbScore = 0;
+                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
+                    return;
+                }
+
+                var distinctThreats = threatResp.Matches.Select(m => m.ThreatType).Distinct().ToList();
+
+                // 2 = any match, 3 = multiple distinct threat types
+                result.GsbScore = distinctThreats.Count >= 2 ? 3 : 2;
+
+                var threatList = string.Join(", ", distinctThreats);
+                result.RedFlags.Add($"Google Safe Browsing: flagged for {threatList}");
+            }
+            catch (HttpRequestException ex) { result.GsbScore = 0; result.Warnings.Add($"GSB API error: {ex.Message}"); }
+            catch (TaskCanceledException) { result.GsbScore = 0; result.Warnings.Add("GSB API timeout"); }
+            catch (Exception ex) { result.GsbScore = 0; result.Warnings.Add($"GSB check failed: {ex.Message}"); }
+        }
+
+        private async Task ScoreMlModelAsync(SafetyAnalysisResultDto result, string url)
         {
             try
             {
@@ -91,6 +244,7 @@ namespace CyberBrief.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    result.MlScore = 0;
                     result.Warnings.Add($"ML model check failed: {response.StatusCode}");
                     return;
                 }
@@ -100,7 +254,8 @@ namespace CyberBrief.Services
 
                 if (prediction is null)
                 {
-                    result.Warnings.Add("ML model returned an empty response.");
+                    result.MlScore = 0;
+                    result.Warnings.Add("ML model returned an empty response");
                     return;
                 }
 
@@ -111,240 +266,50 @@ namespace CyberBrief.Services
                 switch (prediction.Verdict.ToLower())
                 {
                     case "phishing":
-                        result.IsSafe = false;
-                        result.SafetyLevel = "Dangerous";
-                        result.RedFlags.Add(
-                            $"ML Model: Phishing detected (confidence: {prediction.Confidence:P0})");
-                        foreach (var flag in prediction.Flags)
-                            result.RedFlags.Add($"Model flag: {flag}");
-                        break;
-
                     case "malware":
-                        result.IsSafe = false;
-                        result.SafetyLevel = "Dangerous";
+                        // High confidence (≥70%) = 3, lower = 2
+                        result.MlScore = prediction.Confidence >= 0.70 ? 3 : 2;
                         result.RedFlags.Add(
-                            $"ML Model: Malware detected (confidence: {prediction.Confidence:P0})");
+                            $"ML model: {prediction.Verdict} detected " +
+                            $"(confidence: {prediction.Confidence:P0})");
                         foreach (var flag in prediction.Flags)
                             result.RedFlags.Add($"Model flag: {flag}");
                         break;
 
                     case "safe":
-                        result.IsSafe = true;
-                        result.SafetyLevel = "Safe";
-                        if (prediction.Flags.Any())
-                            foreach (var flag in prediction.Flags)
-                                result.Warnings.Add($"Model notice: {flag}");
+                        // Safe but with flags → 1, purely safe → 0
+                        result.MlScore = prediction.Flags.Any() ? 1 : 0;
+                        foreach (var flag in prediction.Flags)
+                            result.Warnings.Add($"Model notice: {flag}");
                         break;
 
                     default:
+                        result.MlScore = 0;
                         result.Warnings.Add($"ML model returned unknown verdict: {prediction.Verdict}");
                         break;
                 }
             }
-            catch (HttpRequestException ex) { result.Warnings.Add($"ML model API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.Warnings.Add("ML model API timeout."); }
-            catch (Exception ex) { result.Warnings.Add($"ML model check failed: {ex.Message}"); }
+            catch (HttpRequestException ex) { result.MlScore = 0; result.Warnings.Add($"ML model API error: {ex.Message}"); }
+            catch (TaskCanceledException) { result.MlScore = 0; result.Warnings.Add("ML model API timeout"); }
+            catch (Exception ex) { result.MlScore = 0; result.Warnings.Add($"ML model check failed: {ex.Message}"); }
         }
 
-        private void DetermineFinalSafety(SafetyAnalysisResultDto result)
+        // ── Final verdict from score ──────────────────────────────────────
+
+        private static void ApplyFinalVerdict(SafetyAnalysisResultDto result)
         {
-            if (result.RedFlags.Any())
+            (result.SafetyLevel, result.IsSafe, result.Message) = result.ThreatScore switch
             {
-                result.IsSafe = false;
-                result.SafetyLevel = "Dangerous";
-                result.Message = "🚨 This link appears to be dangerous. Threats detected.";
-            }
-            else if (result.Warnings.Count >= 3)
-            {
-                result.IsSafe = false;
-                result.SafetyLevel = "Suspicious";
-                result.Message = "⚠️ This link shows multiple suspicious characteristics. Proceed with extreme caution.";
-            }
-            else if (result.Warnings.Any())
-            {
-                result.IsSafe = true;
-                result.SafetyLevel = "Suspicious";
-                result.Message = "⚠️ This link shows some suspicious characteristics. Proceed with caution.";
-            }
-            else if (result.SafetyLevel == "Safe")
-            {
-                result.Message = "✅ No threats detected by security engines or ML model.";
-            }
-            else
-            {
-                result.IsSafe = true;
-                result.SafetyLevel = "Likely Safe";
-                result.Message = "✅ No obvious threats detected, but always be cautious with unfamiliar links.";
-            }
+                <= 1 => ("Safe", true, "✅ No significant threats detected."),
+                <= 3 => ("Low Risk", true, "✅ Minor signals detected — likely safe, but stay alert."),
+                <= 5 => ("Suspicious", false, "⚠️ Suspicious characteristics found. Proceed with caution."),
+                <= 7 => ("High Risk", false, "🔶 Multiple threat signals detected. Avoid if unsure."),
+                _ => ("Dangerous", false, "🚨 This link appears dangerous. Do not proceed.")
+            };
         }
 
-        private async Task CheckWithVirusTotalAsync(SafetyAnalysisResultDto result, string url)
-        {
-            try
-            {
-                var apiKey = _configuration["SecurityAnalysis:VirusTotal:ApiKey"];
-                var enabled = _configuration.GetValue<bool>("SecurityAnalysis:VirusTotal:Enabled");
-
-                if (!enabled || string.IsNullOrEmpty(apiKey))
-                {
-                    result.Warnings.Add("VirusTotal check skipped (not configured)");
-                    return;
-                }
-
-                var submitData = new StringContent(
-                    $"url={Uri.EscapeDataString(url)}",
-                    Encoding.UTF8, "application/x-www-form-urlencoded");
-
-                var submitRequest = new HttpRequestMessage(HttpMethod.Post,
-                    "https://www.virustotal.com/api/v3/urls")
-                {
-                    Content = submitData
-                };
-                submitRequest.Headers.Add("x-apikey", apiKey);
-
-                var submitResponse = await _httpClient.SendAsync(submitRequest);
-                if (!submitResponse.IsSuccessStatusCode)
-                {
-                    result.Warnings.Add($"VirusTotal submission failed: {submitResponse.StatusCode}");
-                    return;
-                }
-
-                var submitResult = JsonSerializer.Deserialize<VirusTotalSubmitResponse>(
-                    await submitResponse.Content.ReadAsStringAsync());
-
-                if (submitResult?.Data?.Id == null)
-                {
-                    result.Warnings.Add("VirusTotal: Unable to get analysis ID");
-                    return;
-                }
-
-                await Task.Delay(2000);
-
-                var analysisRequest = new HttpRequestMessage(HttpMethod.Get,
-                    $"https://www.virustotal.com/api/v3/analyses/{submitResult.Data.Id}");
-                analysisRequest.Headers.Add("x-apikey", apiKey);
-
-                var analysisResponse = await _httpClient.SendAsync(analysisRequest);
-                if (!analysisResponse.IsSuccessStatusCode)
-                {
-                    result.Warnings.Add($"VirusTotal analysis retrieval failed: {analysisResponse.StatusCode}");
-                    return;
-                }
-
-                var analysisResult = JsonSerializer.Deserialize<VirusTotalAnalysisResponse>(
-                    await analysisResponse.Content.ReadAsStringAsync());
-
-                if (analysisResult?.Data?.Attributes?.Stats != null)
-                {
-                    var stats = analysisResult.Data.Attributes.Stats;
-                    var totalEngines = stats.Harmless + stats.Malicious + stats.Suspicious + stats.Undetected + stats.Timeout;
-                    var threats = stats.Malicious + stats.Suspicious;
-
-                    if (threats > 0)
-                    {
-                        result.IsSafe = false;
-                        result.SafetyLevel = stats.Malicious > 0 ? "Dangerous" : "Suspicious";
-                        result.RedFlags.Add($"VirusTotal: {threats}/{totalEngines} engines flagged this URL");
-
-                        if (stats.Malicious > 0)
-                            result.Message = "🚨 This URL has been flagged as malicious by security engines.";
-                    }
-                    else if (totalEngines > 0)
-                    {
-                        result.Warnings.Add($"VirusTotal: Scanned by {totalEngines} engines - appears clean");
-                    }
-                }
-                else
-                {
-                    result.Warnings.Add("VirusTotal: Analysis still in progress or unavailable");
-                }
-            }
-            catch (HttpRequestException ex) { result.Warnings.Add($"VirusTotal API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.Warnings.Add("VirusTotal API timeout"); }
-            catch (Exception ex) { result.Warnings.Add($"VirusTotal check failed: {ex.Message}"); }
-        }
-
-        private async Task CheckWithGoogleSafeBrowsingAsync(SafetyAnalysisResultDto result, string url)
-        {
-            try
-            {
-                var apiKey = _configuration["SecurityAnalysis:GoogleSafeBrowsing:ApiKey"];
-                var enabled = _configuration.GetValue<bool>("SecurityAnalysis:GoogleSafeBrowsing:Enabled");
-
-                if (!enabled || string.IsNullOrEmpty(apiKey))
-                {
-                    result.Warnings.Add("Google Safe Browsing check skipped (not configured)");
-                    return;
-                }
-
-                var requestPayload = new
-                {
-                    client = new
-                    {
-                        clientId = "CyberShield",
-                        clientVersion = "1.0.0"
-                    },
-                    threatInfo = new
-                    {
-                        threatTypes = new[]
-        {
-            "MALWARE",
-            "SOCIAL_ENGINEERING",
-            "UNWANTED_SOFTWARE",
-            "POTENTIALLY_HARMFUL_APPLICATION"
-        },
-                        platformTypes = new[] { "ANY_PLATFORM" },
-                        threatEntryTypes = new[] { "URL" },
-                        threatEntries = new[]
-        {
-            new { url = url }  // explicit property name
-        }
-                    }
-                };
-
-                var content = new StringContent(
-                    JsonSerializer.Serialize(requestPayload),
-                    Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(
-                    $"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={apiKey}", content);
-                var responseBody = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    result.Warnings.Add($"Google Safe Browsing API error: {response.StatusCode} - {responseBody}");
-                    return;
-                }
-
-                var responseContent = await response.Content.ReadAsStringAsync();
-
-                if (string.IsNullOrWhiteSpace(responseContent) || responseContent == "{}")
-                {
-                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
-                    return;
-                }
-
-                var threatResponse = JsonSerializer.Deserialize<GoogleSafeBrowsingThreatResponse>(responseContent);
-
-                if (threatResponse?.Matches != null && threatResponse.Matches.Any())
-                {
-                    result.IsSafe = false;
-                    result.SafetyLevel = "Dangerous";
-                    var threatList = string.Join(", ", threatResponse.Matches.Select(m => m.ThreatType).Distinct());
-                    result.RedFlags.Add($"Google Safe Browsing: URL flagged for {threatList}");
-                    result.Message = "🚨 This URL has been flagged by Google Safe Browsing as unsafe.";
-
-                    foreach (var match in threatResponse.Matches.Take(3))
-                        result.RedFlags.Add($"Threat detected: {match.ThreatType} on {match.PlatformType}");
-                }
-                else
-                {
-                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
-                }
-            }
-            catch (HttpRequestException ex) { result.Warnings.Add($"Google Safe Browsing API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.Warnings.Add("Google Safe Browsing API timeout"); }
-            catch (Exception ex) { result.Warnings.Add($"Google Safe Browsing check failed: {ex.Message}"); }
-        }
+        private static bool IsValidUrl(string url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 }

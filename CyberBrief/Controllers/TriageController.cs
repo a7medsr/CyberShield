@@ -1,10 +1,10 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
-using CyberBrief.Services;
 using CyberBrief.Context;
 using System.Security.Claims;
 using System.Text.Json;
+using CyberBrief.Services.TriageSerivces;
 
 namespace CyberBrief.Controllers
 {

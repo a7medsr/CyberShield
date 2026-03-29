@@ -40,9 +40,17 @@ namespace CyberBrief.Controllers
                 if (cached is not null)
                 {
                     await LinkToUserAsync(cached, userId);
-                    return Ok(JsonSerializer.Deserialize<object>(cached.ResultJson));
-                }
 
+                    // inject live score data from the DB columns into the cached response
+                    var cachedResult = JsonSerializer.Deserialize<JsonElement>(cached.ResultJson);
+                    return Ok(new
+                    {
+                        Cached = true,
+                        ThreatScore = cached.ThreatScore,
+                        ThreatLevel = cached.ThreatLevel,
+                        Data = cachedResult
+                    });
+                }
                 var result = await _urlExpanderService.ExtractShortUrlAsync(url);
 
                 if (!result.IsSuccess)
@@ -66,6 +74,13 @@ namespace CyberBrief.Controllers
                     {
                         IsSafe = result.SafetyAnalysis?.IsSafe ?? false,
                         ThreatLevel = result.SafetyAnalysis?.SafetyLevel ?? "Unknown",
+                        ThreatScore = result.SafetyAnalysis?.ThreatScore ?? 0,
+                        ScoreBreakdown = new
+                        {
+                            VirusTotal = result.SafetyAnalysis?.VtScore ?? 0,
+                            GoogleSafeBrowsing = result.SafetyAnalysis?.GsbScore ?? 0,
+                            MlModel = result.SafetyAnalysis?.MlScore ?? 0,
+                        },
                         Message = result.SafetyAnalysis?.Message ?? "Analysis unavailable",
                         Warnings = result.SafetyAnalysis?.Warnings ?? new List<string>(),
                         RedFlags = result.SafetyAnalysis?.RedFlags ?? new List<string>(),
@@ -79,7 +94,12 @@ namespace CyberBrief.Controllers
                 {
                     Url = url,
                     ResultJson = JsonSerializer.Serialize(response),
-                    AnalyzedAt = DateTime.UtcNow
+                    AnalyzedAt = DateTime.UtcNow,
+
+                    VtScore = result.SafetyAnalysis?.VtScore ?? 0,
+                    GsbScore = result.SafetyAnalysis?.GsbScore ?? 0,
+                    MlScore = result.SafetyAnalysis?.MlScore ?? 0,
+                    ThreatLevel = result.SafetyAnalysis?.SafetyLevel ?? "Unknown"
                 };
 
                 _db.UrlAnalysisRecords.Add(record);
