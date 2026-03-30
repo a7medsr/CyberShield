@@ -56,7 +56,7 @@ namespace CyberBrief.Services.User
             // send confirmation email
             var token = await _userRepo.GenerateEmailConfirmationTokenAsync(user);
             var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-            var link = $"{origin}/api/auth/confirm-email?userId={user.Id}&token={encodedToken}";
+            var link = $"https://cybershield.tecisfun.cloud/login?userId={user.Id}&token={encodedToken}";
 
             await _emailService.SendEmailConfirmationAsync(user.Email!, user.FullName, link);
 
@@ -103,7 +103,7 @@ namespace CyberBrief.Services.User
 
             var token = await _userRepo.GeneratePasswordResetTokenAsync(user);
             var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-            var link = $"{origin}/reset-password?email={user.Email}&token={encodedToken}";
+            var link = $"https://cybershield.tecisfun.cloud/reset-password?email={user.Email}&token={encodedToken}";
 
             await _emailService.SendPasswordResetAsync(user.Email!, user.FullName, link);
 
