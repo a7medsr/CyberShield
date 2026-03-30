@@ -1,8 +1,16 @@
-version: '3.8'
 services:
-  my-app:
+  cyberbrief:
     image: avre1/cyberbrief:latest
-    container_name: my-app
+    container_name: cyberbrief
     ports:
       - "8181:8080"
     restart: always
+
+  cyberbrief-frontend:
+    image: avre1/cyberbrief-frontend:latest
+    container_name: cyberbrief-frontend
+    ports:
+      - "3000:80"
+    restart: always
+    depends_on:
+      - cyberbrief
