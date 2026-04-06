@@ -72,6 +72,13 @@ namespace CyberBrief.Controllers
             var (success, message) = await _authService.ChangePasswordAsync(userId, dto);
             return success ? Ok(new { message }) : BadRequest(new { message });
         }
+        [HttpPost("google-login")]
+        public async Task<IActionResult> GoogleLogin([FromBody] GoogleAuthDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            var (success, token, message) = await _authService.GoogleLoginAsync(dto.IdToken);
+            return success ? Ok(new { token, message }) : Unauthorized(new { message });
+        }
 
         [HttpDelete("delete-account")]
         [Authorize]

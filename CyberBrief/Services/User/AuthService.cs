@@ -2,6 +2,7 @@
 using CyberBrief.Models.User;
 using CyberBrief.Repository;
 using CyberBrief.Services.Email_sending;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -20,6 +21,7 @@ namespace CyberBrief.Services.User
         Task<(bool Success, string Message)> ChangePasswordAsync(string userId, ChangePasswordDto dto);
         Task<(bool Success, string Message)> DeleteAccountAsync(string userId);
         Task<(bool Success, string Message)> ValidateResetTokenAsync(string email, string token);
+        Task<(bool Success, string Token, string Message)> GoogleLoginAsync(string idToken);
     }
 
     // Services/AuthService.cs
@@ -62,6 +64,46 @@ namespace CyberBrief.Services.User
             await _emailService.SendEmailConfirmationAsync(user.Email!, user.FullName, link);
 
             return (true, "Registration successful. Please check your email to confirm your account.");
+        }
+        public async Task<(bool Success, string Token, string Message)> GoogleLoginAsync(string idToken)
+        {
+            var settings = new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = new[] { _config["GoogleAuth:ClientId"] }
+            };
+
+            GoogleJsonWebSignature.Payload payload;
+            try
+            {
+                payload = await GoogleJsonWebSignature.ValidateAsync(idToken, settings);
+            }
+            catch
+            {
+                return (false, string.Empty, "Invalid Google token.");
+            }
+
+            // check if user already exists
+            var user = await _userRepo.GetByEmailAsync(payload.Email);
+
+            if (user is null)
+            {
+                // auto-register them
+                user = new BaseUser
+                {
+                    FirstName = payload.GivenName ?? "Google",
+                    LastName = payload.FamilyName ?? "User",
+                    Email = payload.Email,
+                    UserName = payload.Email,
+                    EmailConfirmed = true // Google already verified it
+                };
+
+                var result = await _userRepo.CreateAsync(user, Guid.NewGuid().ToString() + "Aa1!");
+                if (!result.Succeeded)
+                    return (false, string.Empty, "Failed to create account.");
+            }
+
+            var token = GenerateJwtToken(user);
+            return (true, token, "Login successful.");
         }
 
         public async Task<(bool Success, string Token, string Message)> LoginAsync(LoginDto dto)
