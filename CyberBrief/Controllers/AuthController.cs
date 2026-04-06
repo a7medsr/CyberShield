@@ -83,6 +83,13 @@ namespace CyberBrief.Controllers
             var (success, message) = await _authService.DeleteAccountAsync(userId);
             return success ? Ok(new { message }) : BadRequest(new { message });
         }
+        [HttpGet("validate-reset-token")]
+        [ApiExplorerSettings(IgnoreApi = true)]
+        public async Task<IActionResult> ValidateResetToken([FromQuery] string email, [FromQuery] string token)
+        {
+            var (success, message) = await _authService.ValidateResetTokenAsync(email, token);
+            return success ? Ok(new { message }) : BadRequest(new { message });
+        }
 
         [HttpGet("me")]
         [Authorize]

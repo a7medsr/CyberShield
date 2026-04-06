@@ -19,6 +19,7 @@ namespace CyberBrief.Services.User
         Task<(bool Success, string Message)> ResetPasswordAsync(ResetPasswordDto dto);
         Task<(bool Success, string Message)> ChangePasswordAsync(string userId, ChangePasswordDto dto);
         Task<(bool Success, string Message)> DeleteAccountAsync(string userId);
+        Task<(bool Success, string Message)> ValidateResetTokenAsync(string email, string token);
     }
 
     // Services/AuthService.cs
@@ -56,7 +57,7 @@ namespace CyberBrief.Services.User
             // send confirmation email
             var token = await _userRepo.GenerateEmailConfirmationTokenAsync(user);
             var encodedToken = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-            var link = $"https://cybershield.tecisfun.cloud/login?userId={user.Id}&token={encodedToken}";
+            var link = $"https://cybershield.tecisfun.cloud/confirm-email?userId={user.Id}&token={encodedToken}";
 
             await _emailService.SendEmailConfirmationAsync(user.Email!, user.FullName, link);
 
@@ -148,6 +149,19 @@ namespace CyberBrief.Services.User
             return result.Succeeded
                 ? (true, "Account deleted successfully.")
                 : (false, string.Join(", ", result.Errors.Select(e => e.Description)));
+        }
+        public async Task<(bool Success, string Message)> ValidateResetTokenAsync(string email, string token)
+        {
+            var user = await _userRepo.GetByEmailAsync(email);
+            if (user is null)
+                return (false, "Invalid request.");
+
+            var decodedToken = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(token));
+            var isValid = await _userRepo.VerifyUserTokenAsync(user, "Default", "ResetPassword", decodedToken);
+
+            return isValid
+                ? (true, "Token is valid.")
+                : (false, "This reset link has expired or is invalid.");
         }
 
         private string GenerateJwtToken(BaseUser user)

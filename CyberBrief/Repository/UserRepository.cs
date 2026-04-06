@@ -18,6 +18,7 @@ namespace CyberBrief.Repository
         Task<IdentityResult> ResetPasswordAsync(BaseUser user, string token, string newPassword);
         Task<IdentityResult> ChangePasswordAsync(BaseUser user, string current, string newPassword);
         Task<IList<string>> GetRolesAsync(BaseUser user);
+        Task<bool> VerifyUserTokenAsync(BaseUser user, string tokenProvider, string purpose, string token);
     }
 
     // Repositories/UserRepository.cs
@@ -29,7 +30,8 @@ namespace CyberBrief.Repository
         {
             _userManager = userManager;
         }
-
+        public Task<bool> VerifyUserTokenAsync(BaseUser user, string tokenProvider, string purpose, string token) =>
+    _userManager.VerifyUserTokenAsync(user, tokenProvider, purpose, token);
         public Task<BaseUser?> GetByIdAsync(string id) =>
             _userManager.FindByIdAsync(id);
 
