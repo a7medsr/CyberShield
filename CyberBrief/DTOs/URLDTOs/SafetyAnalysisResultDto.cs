@@ -10,6 +10,10 @@
         public int GsbScore { get; set; }  // 0–3
         public int MlScore { get; set; }   // 0–3
 
+        // Stage 1 flag gates
+        public bool VtFlagged { get; set; } = false;
+        public bool GsbFlagged { get; set; } = false;
+
         public int ThreatScore => VtScore + GsbScore + MlScore;
 
         public List<string> Warnings { get; set; } = new();

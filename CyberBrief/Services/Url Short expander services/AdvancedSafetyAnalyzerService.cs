@@ -28,30 +28,41 @@ namespace CyberBrief.Services
 
             try
             {
+                // ── Guard: validate URL first ─────────────────────────────
                 if (!IsValidUrl(finalUrl))
                 {
                     result.IsSafe = false;
-                    result.VtScore = 4; result.GsbScore = 3; result.MlScore = 3; // max out = obvious bad
-                    result.RedFlags.Add("Invalid or malformed URL");
-                    ApplyFinalVerdict(result);
+                    result.SafetyLevel = "Dangerous";
+                    result.Message = "Invalid or malformed URL.";
+                    result.RedFlags.Add("Invalid or malformed URL — cannot be analyzed.");
                     return result;
                 }
 
-                // ── Step 1 & 2: VirusTotal + GSB run in parallel ──────────
+                // ── Stage 1: VirusTotal + Google Safe Browsing in parallel ─
                 await Task.WhenAll(
-                    ScoreVirusTotalAsync(result, finalUrl),
-                    ScoreGoogleSafeBrowsingAsync(result, finalUrl)
+                    CheckVirusTotalAsync(result, finalUrl),
+                    CheckGoogleSafeBrowsingAsync(result, finalUrl)
                 );
 
-                // ── Step 3: ML model — skip if already condemned ──────────
-                bool alreadyFlagged = result.VtScore >= 3 || result.GsbScore >= 2;
-                if (!alreadyFlagged)
-                    await ScoreMlModelAsync(result, finalUrl);
-                else
-                    result.Warnings.Add("ML model skipped — threat already confirmed by external engines");
+                // ── Stage 1 verdict: if EITHER engine flagged anything → stop
+                bool flaggedByExternalEngines = result.VtFlagged || result.GsbFlagged;
 
-                // ── Step 4: derive final verdict from score ───────────────
-                ApplyFinalVerdict(result);
+                if (flaggedByExternalEngines)
+                {
+                    result.IsSafe = false;
+                    result.SafetyLevel = "Dangerous";
+                    result.Message = BuildExternalEngineMessage(result);
+                    result.Warnings.Add("ML model analysis was skipped — threat already confirmed by external security engines.");
+                    return result;
+                }
+
+                // ── Stage 2: External engines gave the all-clear → run ML ──
+                result.Warnings.Add("URL was not flagged by VirusTotal or Google Safe Browsing. Proceeding to ML model analysis...");
+
+                await CheckMlModelAsync(result, finalUrl);
+
+                // ── Final verdict based on ML result ──────────────────────
+                ApplyMlVerdict(result);
                 return result;
             }
             catch (Exception ex)
@@ -59,14 +70,14 @@ namespace CyberBrief.Services
                 result.IsSafe = false;
                 result.SafetyLevel = "Unknown";
                 result.Message = "Unable to complete safety analysis.";
-                result.Warnings.Add($"Analysis error: {ex.Message}");
+                result.Warnings.Add($"Unexpected analysis error: {ex.Message}");
                 return result;
             }
         }
 
-        // ── Scoring helpers ───────────────────────────────────────────────
+        // ── Stage 1: VirusTotal ───────────────────────────────────────────
 
-        private async Task ScoreVirusTotalAsync(SafetyAnalysisResultDto result, string url)
+        private async Task CheckVirusTotalAsync(SafetyAnalysisResultDto result, string url)
         {
             try
             {
@@ -75,12 +86,12 @@ namespace CyberBrief.Services
 
                 if (!enabled || string.IsNullOrEmpty(apiKey))
                 {
-                    result.VtScore = 0; // benefit of the doubt
-                    result.Warnings.Add("VirusTotal check skipped (not configured)");
+                    result.VtFlagged = false;
+                    result.Warnings.Add("VirusTotal check skipped (not configured).");
                     return;
                 }
 
-                // Submit
+                // Submit URL for scanning
                 var submitReq = new HttpRequestMessage(HttpMethod.Post,
                     "https://www.virustotal.com/api/v3/urls")
                 {
@@ -93,8 +104,8 @@ namespace CyberBrief.Services
                 var submitResp = await _httpClient.SendAsync(submitReq);
                 if (!submitResp.IsSuccessStatusCode)
                 {
-                    result.VtScore = 0;
-                    result.Warnings.Add($"VirusTotal submission failed: {submitResp.StatusCode}");
+                    result.VtFlagged = false;
+                    result.Warnings.Add($"VirusTotal submission failed: {submitResp.StatusCode}.");
                     return;
                 }
 
@@ -103,14 +114,15 @@ namespace CyberBrief.Services
 
                 if (submitData?.Data?.Id is null)
                 {
-                    result.VtScore = 0;
-                    result.Warnings.Add("VirusTotal: could not get analysis ID");
+                    result.VtFlagged = false;
+                    result.Warnings.Add("VirusTotal: could not retrieve analysis ID.");
                     return;
                 }
 
+                // Brief wait for analysis to complete
                 await Task.Delay(2000);
 
-                // Retrieve analysis
+                // Retrieve analysis results
                 var analysisReq = new HttpRequestMessage(HttpMethod.Get,
                     $"https://www.virustotal.com/api/v3/analyses/{submitData.Data.Id}");
                 analysisReq.Headers.Add("x-apikey", apiKey);
@@ -118,8 +130,8 @@ namespace CyberBrief.Services
                 var analysisResp = await _httpClient.SendAsync(analysisReq);
                 if (!analysisResp.IsSuccessStatusCode)
                 {
-                    result.VtScore = 0;
-                    result.Warnings.Add($"VirusTotal analysis retrieval failed: {analysisResp.StatusCode}");
+                    result.VtFlagged = false;
+                    result.Warnings.Add($"VirusTotal analysis retrieval failed: {analysisResp.StatusCode}.");
                     return;
                 }
 
@@ -129,39 +141,47 @@ namespace CyberBrief.Services
                 var stats = analysis?.Data?.Attributes?.Stats;
                 if (stats is null)
                 {
-                    result.VtScore = 0;
-                    result.Warnings.Add("VirusTotal: analysis still in progress or unavailable");
+                    result.VtFlagged = false;
+                    result.Warnings.Add("VirusTotal: analysis still in progress or returned no stats.");
                     return;
                 }
 
                 var totalEngines = stats.Harmless + stats.Malicious
                                  + stats.Suspicious + stats.Undetected + stats.Timeout;
-                var flagged = stats.Malicious + stats.Suspicious;
+                var maliciousCount = stats.Malicious;
+                var suspiciousCount = stats.Suspicious;
+                var totalFlagged = maliciousCount + suspiciousCount;
 
-                // Ratio-based scoring: 1 noisy engine out of 95 ≠ dangerous
-                result.VtScore = flagged switch
+                // ANY malicious or suspicious flag = flagged
+                if (totalFlagged >= 1)
                 {
-                    0 => 0,
-                    <= 2 => 1,
-                    <= 5 => 2,
-                    <= 10 => 3,
-                    _ => 4
-                };
+                    result.VtFlagged = true;
+                    result.VtScore = totalFlagged;
 
-                var detail = $"VirusTotal: {flagged}/{totalEngines} engines flagged";
-                if (result.VtScore >= 2)
-                    result.RedFlags.Add(detail);
-                else if (result.VtScore == 1)
-                    result.Warnings.Add($"{detail} (low confidence — likely false positive)");
+                    var threatParts = new List<string>();
+                    if (maliciousCount > 0)
+                        threatParts.Add($"{maliciousCount} malicious");
+                    if (suspiciousCount > 0)
+                        threatParts.Add($"{suspiciousCount} suspicious");
+
+                    result.RedFlags.Add(
+                        $"VirusTotal: flagged by {string.Join(" and ", threatParts)} engine(s) out of {totalEngines} total.");
+                }
                 else
-                    result.Warnings.Add($"VirusTotal: scanned by {totalEngines} engines — clean");
+                {
+                    result.VtFlagged = false;
+                    result.VtScore = 0;
+                    result.Warnings.Add($"VirusTotal: scanned by {totalEngines} engines — no threats detected.");
+                }
             }
-            catch (HttpRequestException ex) { result.VtScore = 0; result.Warnings.Add($"VirusTotal API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.VtScore = 0; result.Warnings.Add("VirusTotal API timeout"); }
-            catch (Exception ex) { result.VtScore = 0; result.Warnings.Add($"VirusTotal check failed: {ex.Message}"); }
+            catch (HttpRequestException ex) { result.VtFlagged = false; result.Warnings.Add($"VirusTotal API error: {ex.Message}"); }
+            catch (TaskCanceledException) { result.VtFlagged = false; result.Warnings.Add("VirusTotal API timeout."); }
+            catch (Exception ex) { result.VtFlagged = false; result.Warnings.Add($"VirusTotal check failed: {ex.Message}"); }
         }
 
-        private async Task ScoreGoogleSafeBrowsingAsync(SafetyAnalysisResultDto result, string url)
+        // ── Stage 1: Google Safe Browsing ─────────────────────────────────
+
+        private async Task CheckGoogleSafeBrowsingAsync(SafetyAnalysisResultDto result, string url)
         {
             try
             {
@@ -170,8 +190,8 @@ namespace CyberBrief.Services
 
                 if (!enabled || string.IsNullOrEmpty(apiKey))
                 {
-                    result.GsbScore = 0;
-                    result.Warnings.Add("Google Safe Browsing check skipped (not configured)");
+                    result.GsbFlagged = false;
+                    result.Warnings.Add("Google Safe Browsing check skipped (not configured).");
                     return;
                 }
 
@@ -199,40 +219,47 @@ namespace CyberBrief.Services
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    result.GsbScore = 0;
-                    result.Warnings.Add($"Google Safe Browsing error: {response.StatusCode}");
+                    result.GsbFlagged = false;
+                    result.Warnings.Add($"Google Safe Browsing API error: {response.StatusCode}.");
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(body) || body == "{}")
+                // Empty body or "{}" means no threats found
+                if (string.IsNullOrWhiteSpace(body) || body.Trim() == "{}")
                 {
-                    result.GsbScore = 0;
-                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
+                    result.GsbFlagged = false;
+                    result.Warnings.Add("Google Safe Browsing: no threats detected.");
                     return;
                 }
 
                 var threatResp = JsonSerializer.Deserialize<GoogleSafeBrowsingThreatResponse>(body);
                 if (threatResp?.Matches is null || !threatResp.Matches.Any())
                 {
-                    result.GsbScore = 0;
-                    result.Warnings.Add("Google Safe Browsing: URL appears safe");
+                    result.GsbFlagged = false;
+                    result.Warnings.Add("Google Safe Browsing: no threats detected.");
                     return;
                 }
 
-                var distinctThreats = threatResp.Matches.Select(m => m.ThreatType).Distinct().ToList();
+                // ANY match = flagged
+                result.GsbFlagged = true;
+                result.GsbScore = threatResp.Matches.Count;
 
-                // 2 = any match, 3 = multiple distinct threat types
-                result.GsbScore = distinctThreats.Count >= 2 ? 3 : 2;
+                var distinctThreats = threatResp.Matches
+                    .Select(m => m.ThreatType)
+                    .Distinct()
+                    .ToList();
 
-                var threatList = string.Join(", ", distinctThreats);
-                result.RedFlags.Add($"Google Safe Browsing: flagged for {threatList}");
+                result.RedFlags.Add(
+                    $"Google Safe Browsing: flagged for {string.Join(", ", distinctThreats)}.");
             }
-            catch (HttpRequestException ex) { result.GsbScore = 0; result.Warnings.Add($"GSB API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.GsbScore = 0; result.Warnings.Add("GSB API timeout"); }
-            catch (Exception ex) { result.GsbScore = 0; result.Warnings.Add($"GSB check failed: {ex.Message}"); }
+            catch (HttpRequestException ex) { result.GsbFlagged = false; result.Warnings.Add($"GSB API error: {ex.Message}"); }
+            catch (TaskCanceledException) { result.GsbFlagged = false; result.Warnings.Add("GSB API timeout."); }
+            catch (Exception ex) { result.GsbFlagged = false; result.Warnings.Add($"GSB check failed: {ex.Message}"); }
         }
 
-        private async Task ScoreMlModelAsync(SafetyAnalysisResultDto result, string url)
+        // ── Stage 2: ML Model ─────────────────────────────────────────────
+
+        private async Task CheckMlModelAsync(SafetyAnalysisResultDto result, string url)
         {
             try
             {
@@ -245,7 +272,7 @@ namespace CyberBrief.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     result.MlScore = 0;
-                    result.Warnings.Add($"ML model check failed: {response.StatusCode}");
+                    result.Warnings.Add($"ML model check failed: {response.StatusCode}.");
                     return;
                 }
 
@@ -255,7 +282,7 @@ namespace CyberBrief.Services
                 if (prediction is null)
                 {
                     result.MlScore = 0;
-                    result.Warnings.Add("ML model returned an empty response");
+                    result.Warnings.Add("ML model returned an empty response.");
                     return;
                 }
 
@@ -267,17 +294,15 @@ namespace CyberBrief.Services
                 {
                     case "phishing":
                     case "malware":
-                        // High confidence (≥70%) = 3, lower = 2
                         result.MlScore = prediction.Confidence >= 0.70 ? 3 : 2;
                         result.RedFlags.Add(
                             $"ML model: {prediction.Verdict} detected " +
-                            $"(confidence: {prediction.Confidence:P0})");
+                            $"(confidence: {prediction.Confidence:P0}).");
                         foreach (var flag in prediction.Flags)
                             result.RedFlags.Add($"Model flag: {flag}");
                         break;
 
                     case "safe":
-                        // Safe but with flags → 1, purely safe → 0
                         result.MlScore = prediction.Flags.Any() ? 1 : 0;
                         foreach (var flag in prediction.Flags)
                             result.Warnings.Add($"Model notice: {flag}");
@@ -285,26 +310,46 @@ namespace CyberBrief.Services
 
                     default:
                         result.MlScore = 0;
-                        result.Warnings.Add($"ML model returned unknown verdict: {prediction.Verdict}");
+                        result.Warnings.Add($"ML model returned unknown verdict: {prediction.Verdict}.");
                         break;
                 }
             }
             catch (HttpRequestException ex) { result.MlScore = 0; result.Warnings.Add($"ML model API error: {ex.Message}"); }
-            catch (TaskCanceledException) { result.MlScore = 0; result.Warnings.Add("ML model API timeout"); }
+            catch (TaskCanceledException) { result.MlScore = 0; result.Warnings.Add("ML model API timeout."); }
             catch (Exception ex) { result.MlScore = 0; result.Warnings.Add($"ML model check failed: {ex.Message}"); }
         }
 
-        // ── Final verdict from score ──────────────────────────────────────
+        // ── Verdict helpers ───────────────────────────────────────────────
 
-        private static void ApplyFinalVerdict(SafetyAnalysisResultDto result)
+        /// <summary>
+        /// Builds a human-readable message when Stage 1 engines flag the URL.
+        /// Describes exactly which engine(s) flagged it and what for.
+        /// </summary>
+        private static string BuildExternalEngineMessage(SafetyAnalysisResultDto result)
         {
-            (result.SafetyLevel, result.IsSafe, result.Message) = result.ThreatScore switch
+            var sources = new List<string>();
+            if (result.VtFlagged) sources.Add("VirusTotal");
+            if (result.GsbFlagged) sources.Add("Google Safe Browsing");
+
+            var engineList = string.Join(" and ", sources);
+            var threats = result.RedFlags.Any()
+                ? " Detected: " + string.Join("; ", result.RedFlags) + "."
+                : string.Empty;
+
+            return $"This URL was flagged as dangerous by {engineList}.{threats} Do not proceed.";
+        }
+
+        /// <summary>
+        /// Sets the final verdict fields after the ML model has run (Stage 2 only).
+        /// </summary>
+        private static void ApplyMlVerdict(SafetyAnalysisResultDto result)
+        {
+            (result.SafetyLevel, result.IsSafe, result.Message) = result.MlScore switch
             {
-                <= 1 => ("Safe", true, "✅ No significant threats detected."),
-                <= 3 => ("Low Risk", true, "✅ Minor signals detected — likely safe, but stay alert."),
-                <= 5 => ("Suspicious", false, "⚠️ Suspicious characteristics found. Proceed with caution."),
-                <= 7 => ("High Risk", false, "🔶 Multiple threat signals detected. Avoid if unsure."),
-                _ => ("Dangerous", false, "🚨 This link appears dangerous. Do not proceed.")
+                0 => ("Safe", true, "URL was not flagged by any engine. ML model found no threats."),
+                1 => ("Low Risk", true, "ML model found minor signals — likely safe, but stay alert."),
+                2 => ("Suspicious", false, "ML model detected suspicious characteristics. Proceed with caution."),
+                _ => ("Dangerous", false, "ML model identified this URL as a threat. Do not proceed.")
             };
         }
 

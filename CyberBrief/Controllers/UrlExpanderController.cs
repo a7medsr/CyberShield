@@ -23,7 +23,7 @@ namespace CyberBrief.Controllers
         }
 
         [HttpGet("extract")]
-        [Authorize]  // ← added
+        [Authorize]
         public async Task<IActionResult> Extract([FromQuery] string url)
         {
             try
@@ -41,7 +41,6 @@ namespace CyberBrief.Controllers
                 {
                     await LinkToUserAsync(cached, userId);
 
-                    // inject live score data from the DB columns into the cached response
                     var cachedResult = JsonSerializer.Deserialize<JsonElement>(cached.ResultJson);
                     return Ok(new
                     {
@@ -51,25 +50,37 @@ namespace CyberBrief.Controllers
                         Data = cachedResult
                     });
                 }
+
                 var result = await _urlExpanderService.ExtractShortUrlAsync(url);
 
+                // IsSuccess can now be true even when the host was unreachable
+                // (safety analysis still runs on the URL string in that case)
                 if (!result.IsSuccess)
                 {
                     return StatusCode(500, new
                     {
                         error = "Failed to expand the URL",
-                        message = result.ErrorMessage,
-                        details = result.RedirectionLinks
+                        message = result.ErrorMessage
                     });
                 }
+
+                var hostUnreachable = result.SafetyAnalysis?.Warnings
+                    .Any(w => w.StartsWith("Host unreachable")) ?? false;
 
                 var response = new
                 {
                     Status = "Success",
                     OriginalURL = url,
                     ExpandedURL = result.FinalUrl,
-                    RedirectChain = result.RedirectionLinks,
+
+                    // null when there were zero redirects, list of hops otherwise
+                    RedirectChain = result.RedirectionLinks.Any()
+                        ? result.RedirectionLinks
+                        : null,
                     RedirectCount = result.RedirectionLinks.Count,
+
+                    HostReachable = !hostUnreachable,
+
                     SecurityAnalysis = new
                     {
                         IsSafe = result.SafetyAnalysis?.IsSafe ?? false,
@@ -95,7 +106,6 @@ namespace CyberBrief.Controllers
                     Url = url,
                     ResultJson = JsonSerializer.Serialize(response),
                     AnalyzedAt = DateTime.UtcNow,
-
                     VtScore = result.SafetyAnalysis?.VtScore ?? 0,
                     GsbScore = result.SafetyAnalysis?.GsbScore ?? 0,
                     MlScore = result.SafetyAnalysis?.MlScore ?? 0,
@@ -121,7 +131,6 @@ namespace CyberBrief.Controllers
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
-            // ← fetch first, then deserialize in memory (fixes CS0854)
             var records = await _db.UrlAnalysisRecords
                 .Include(r => r.Users)
                 .Where(r => r.Users.Any(u => u.Id == userId))
@@ -130,15 +139,18 @@ namespace CyberBrief.Controllers
                 {
                     r.Url,
                     r.AnalyzedAt,
-                    r.ResultJson      // ← pull raw string from DB
+                    r.ThreatLevel,
+                    r.ThreatScore,
+                    r.ResultJson
                 })
                 .ToListAsync();
 
-            // ← deserialize AFTER the query, in memory
             var result = records.Select(r => new
             {
                 r.Url,
                 r.AnalyzedAt,
+                r.ThreatLevel,
+                r.ThreatScore,
                 Result = JsonSerializer.Deserialize<object>(r.ResultJson)
             });
 
@@ -150,7 +162,6 @@ namespace CyberBrief.Controllers
         {
             if (userId is null) return;
 
-            // avoid duplicate link
             var alreadyLinked = record.Users.Any(u => u.Id == userId);
             if (alreadyLinked) return;
 

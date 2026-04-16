@@ -14,6 +14,7 @@ namespace CyberBrief.Services
             _httpClient = httpClient;
             _safetyAnalyzer = safetyAnalyzer;
         }
+
         public async Task<UrlExpansionResultDto> ExtractShortUrlAsync(string shortUrl)
         {
             var result = new UrlExpansionResultDto();
@@ -61,9 +62,9 @@ namespace CyberBrief.Services
                     }
                     else
                     {
-                        // Final destination reached
+                        // Final destination reached — only add to chain if we actually redirected
                         result.FinalUrl = currentUrl;
-                        if (!result.RedirectionLinks.Contains(currentUrl))
+                        if (redirectCount > 0 && !result.RedirectionLinks.Contains(currentUrl))
                         {
                             result.RedirectionLinks.Add(currentUrl);
                         }
@@ -82,24 +83,32 @@ namespace CyberBrief.Services
                 result.FinalUrl ??= currentUrl;
                 result.IsSuccess = true;
 
-                // IMPORTANT: Perform safety analysis using your existing service
+                // Perform safety analysis
                 if (!string.IsNullOrEmpty(result.FinalUrl))
                 {
-                    result.SafetyAnalysis = await _safetyAnalyzer.AnalyzeUrlSafetyAsync(result.FinalUrl, result.RedirectionLinks);
+                    result.SafetyAnalysis = await _safetyAnalyzer.AnalyzeUrlSafetyAsync(
+                        result.FinalUrl, result.RedirectionLinks);
                 }
 
                 return result;
             }
             catch (HttpRequestException ex)
             {
-                result.ErrorMessage = $"HTTP request error: {ex.Message}";
-                result.RedirectionLinks.Add($"Error fetching the URL: {ex.Message}");
+                // Host unreachable / DNS failure — still run safety analysis on the URL string
+                result.FinalUrl = shortUrl;
+                result.IsSuccess = true;
+
+                result.SafetyAnalysis = await _safetyAnalyzer.AnalyzeUrlSafetyAsync(
+                    result.FinalUrl, result.RedirectionLinks);
+
+                result.SafetyAnalysis.Warnings.Insert(0,
+                    $"Host unreachable — URL could not be fetched: {ex.Message}");
+
                 return result;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = $"Unexpected error: {ex.Message}";
-                result.RedirectionLinks.Add($"Error fetching the URL: {ex.Message}");
                 return result;
             }
         }
