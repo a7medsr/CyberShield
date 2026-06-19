@@ -78,8 +78,8 @@ namespace CyberBrief.Controllers
             return Ok(new { scan_id = scanId, target = tgt, status });
         }
 
-        [HttpGet("report")]
-        public async Task<IActionResult> Report([FromQuery] string target)
+        [HttpGet("result")]
+        public async Task<IActionResult> Result([FromQuery] string target)
         {
             var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
 
@@ -92,17 +92,9 @@ namespace CyberBrief.Controllers
 
             if (!record.Users.Any(u => u.Id == userId))
                 return Forbid();
-            if (record.PdfReport == null)
-            {
 
-                var (_, _, status) = await _scanService.CheckStatusAsync(target);
-
-                if (status != "completed")
-                    return BadRequest(new { error = "Scan not completed yet.", status });
-            }
-
-            var pdf = await _scanService.GetReportPdfAsync(target);
-            return File(pdf, "application/pdf", $"report_{target}.pdf");
+            var result = await _scanService.GetResultAsync(target);
+            return Ok(result);
         }
 
         [HttpGet("my-history")]

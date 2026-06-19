@@ -1,9 +1,11 @@
-﻿namespace CyberBrief.Services.IServices
+using CyberBrief.DTOs.Web_Scan;
+
+namespace CyberBrief.Services.IServices
 {
     public interface IScanService
     {
         Task<(bool AlreadyDone, string ScanId)> StartScanAsync(string target);
         Task<(string ScanId, string Target, string Status)> CheckStatusAsync(string target);
-        Task<byte[]> GetReportPdfAsync(string target);
+        Task<WebScanResultDto> GetResultAsync(string target);
     }
 }

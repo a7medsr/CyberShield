@@ -15,7 +15,7 @@ namespace CyberBrief.Models.Web_Scaning
 
         public string Status { get; set; } = string.Empty;
 
-        public byte[]? PdfReport { get; set; }
+        public WebScanSummary? Summary { get; set; }
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public ICollection<BaseUser> Users { get; set; } = new List<BaseUser>();
