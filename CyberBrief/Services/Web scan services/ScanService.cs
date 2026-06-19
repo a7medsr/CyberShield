@@ -122,9 +122,14 @@ namespace CyberBrief.Services.Web_scan_services
             if (record is null)
                 throw new KeyNotFoundException($"No scan found for target: {target}");
 
-            // Already built -> serve from DB
+            // Already built -> serve from DB, but still top up any CVE rows that
+            // never got an explanation (e.g. a prior enrichment failure) so the
+            // cached result self-heals on the next view instead of staying null.
             if (record.Summary is not null)
+            {
+                await EnrichMissingAsync(record.Summary);
                 return MapToDto(record, record.Summary);
+            }
 
             // Confirm the remote scan is actually done before fetching results
             var (_, _, status) = await CheckStatusAsync(target);
@@ -165,12 +170,34 @@ namespace CyberBrief.Services.Web_scan_services
             _db.WebScanSummaries.Add(summary);
             await _db.SaveChangesAsync();
 
-            // Reuse the container's NVD/OSV enrichment for the CVE rows
-            await _cve.EnrichWebCvesAsync(record.ScanId);
+            // Reuse the container's NVD/OSV enrichment on the in-memory CVE rows
+            await EnrichMissingAsync(summary);
 
-            // Reload findings with the freshly written explanation/patch
-            await _db.Entry(summary).Collection(s => s.Findings).LoadAsync();
             return MapToDto(record, summary);
+        }
+
+        // Enrich the CVE-bearing findings of a summary that still lack an
+        // explanation. Operates on the already-tracked in-memory entities (no
+        // fragile re-query) and never throws -- a transient NVD/OSV failure must
+        // not 500 the request nor poison the cached result.
+        private async Task EnrichMissingAsync(WebScanSummary summary)
+        {
+            var toEnrich = summary.Findings
+                .Where(f => !string.IsNullOrEmpty(f.Cve) && f.Explanation == null)
+                .Cast<ICveEnrichable>()
+                .ToList();
+
+            if (toEnrich.Count == 0)
+                return;
+
+            try
+            {
+                await _cve.EnrichAsync(toEnrich);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WebScan enrich] {summary.Id}: {ex.Message}");
+            }
         }
 
         // ── parse the unified findings[] into WebFinding rows ─────────────────
