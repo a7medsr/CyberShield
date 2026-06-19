@@ -26,8 +26,10 @@ namespace CyberBrief.Context
         public DbSet<PasswordAudit> PasswordAudits { get; set; }
         //triage
         public DbSet<TriageCache> TriageCaches { get; set; }
-        //web scaning 
+        //web scaning
         public DbSet<ScanRecord> ScanRecords { get; set; }
+        public DbSet<WebScanSummary> WebScanSummaries { get; set; }
+        public DbSet<WebFinding> WebFindings { get; set; }
         //shalow url scannign 
         public DbSet<UrlAnalysisRecord> UrlAnalysisRecords { get; set; }
 
@@ -57,6 +59,19 @@ namespace CyberBrief.Context
                 .HasMany(u => u.WebScans)
                 .WithMany(s => s.Users)
                 .UsingEntity(j => j.ToTable("UserWebScans"));
+
+            // Web scan: one ScanRecord -> one WebScanSummary -> many WebFindings
+            modelBuilder.Entity<WebScanSummary>()
+                .HasOne(s => s.ScanRecord)
+                .WithOne(r => r.Summary)
+                .HasForeignKey<WebScanSummary>(s => s.ScanRecordId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<WebScanSummary>()
+                .HasMany(s => s.Findings)
+                .WithOne(f => f.Summary)
+                .HasForeignKey(f => f.SummaryId)
+                .OnDelete(DeleteBehavior.Cascade);
 
         }
     }

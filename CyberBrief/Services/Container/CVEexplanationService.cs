@@ -25,7 +25,7 @@ namespace CyberBrief.Services
             _nvdApiKey = config["NvdApiKey"];
         }
 
-        // ── MAIN ENTRY POINT ─────────────────────────────────────────────────
+        // ── MAIN ENTRY POINT (container) ──────────────────────────────────────
         public async Task<List<Vulnerability>> GetExplanation(string imageName)
         {
             var imageId = await _context.Images
@@ -39,27 +39,45 @@ namespace CyberBrief.Services
                 .Where(x => x.Explanation == null)
                 .ToListAsync();
 
-            if (!vulnerabilities.Any())
-                return vulnerabilities;
+            await EnrichAsync(vulnerabilities.Cast<ICveEnrichable>().ToList());
+            return vulnerabilities;
+        }
 
-            var batches = vulnerabilities
+        // ── ENTRY POINT (web scan) ────────────────────────────────────────────
+        public async Task EnrichWebCvesAsync(string scanId)
+        {
+            var findings = await _context.WebFindings
+                .Where(f => f.Summary.ScanRecord.ScanId == scanId
+                            && f.Cve != null
+                            && f.Explanation == null)
+                .ToListAsync();
+
+            await EnrichAsync(findings.Cast<ICveEnrichable>().ToList());
+        }
+
+        // ── SHARED: enrich a batch of CVE-bearing items ───────────────────────
+        public async Task EnrichAsync(IList<ICveEnrichable> items)
+        {
+            if (items is null || !items.Any())
+                return;
+
+            var batches = items
                 .Select((v, i) => new { v, i })
                 .GroupBy(x => x.i / BatchSize)
                 .Select(g => g.Select(x => x.v).ToList());
 
             foreach (var batch in batches)
-                await Task.WhenAll(batch.Select(v => ProcessVulnerability(v)));
+                await Task.WhenAll(batch.Select(ProcessAsync));
 
             await _context.SaveChangesAsync();
-            return vulnerabilities;
         }
 
         // ── PROCESS ONE CVE ───────────────────────────────────────────────────
-        private async Task ProcessVulnerability(Vulnerability vuln)
+        private async Task ProcessAsync(ICveEnrichable item)
         {
             // fire NVD and OSV simultaneously
-            var nvdTask = FetchNvdDescription(vuln.Id);
-            var osvTask = FetchOsvRawPatch(vuln.Id);
+            var nvdTask = FetchNvdDescription(item.CveId);
+            var osvTask = FetchOsvRawPatch(item.CveId);
 
             await Task.WhenAll(nvdTask, osvTask);
 
@@ -71,41 +89,41 @@ namespace CyberBrief.Services
                 ? nvdDescription
                 : osvResult?.OsvDescription;
 
-            var extractedVersion = ExtractVersionFromDescription(descriptionForExtraction, vuln.Package);
+            var extractedVersion = ExtractVersionFromDescription(descriptionForExtraction, item.Package);
 
             // ── explanation: NVD → OSV details → fallback ──
             if (!string.IsNullOrEmpty(nvdDescription))
             {
-                vuln.Explanation = nvdDescription;
+                item.Explanation = nvdDescription;
             }
             else if (!string.IsNullOrEmpty(osvResult?.OsvDescription))
             {
-                vuln.Explanation = osvResult.OsvDescription;
+                item.Explanation = osvResult.OsvDescription;
             }
             else
             {
-                vuln.Explanation =
-                    $"No description currently available for {vuln.Id}. " +
-                    $"Check https://nvd.nist.gov/vuln/detail/{vuln.Id} for updates.";
+                item.Explanation =
+                    $"No description currently available for {item.CveId}. " +
+                    $"Check https://nvd.nist.gov/vuln/detail/{item.CveId} for updates.";
             }
 
             // ── patch: clean version → extracted version → package manager → advisory ──
             if (osvResult == null)
             {
-                vuln.Batch = extractedVersion != null
-                    ? $"Update {vuln.Package} to version {extractedVersion} or later to remediate this vulnerability."
+                item.Patch = extractedVersion != null
+                    ? $"Update {item.Package} to version {extractedVersion} or later to remediate this vulnerability."
                     : "No patch information available. Monitor vendor advisories for updates.";
             }
             else if (osvResult.HasCommitHashes)
             {
-                vuln.Batch = extractedVersion != null
-                    ? $"Update {vuln.Package} to version {extractedVersion} or later to remediate this vulnerability."
-                    : $"A patch is available for {vuln.Package}. Apply the latest security update " +
-                      $"from your package manager (e.g. apk upgrade {vuln.Package} or apt upgrade {vuln.Package}).";
+                item.Patch = extractedVersion != null
+                    ? $"Update {item.Package} to version {extractedVersion} or later to remediate this vulnerability."
+                    : $"A patch is available for {item.Package}. Apply the latest security update " +
+                      $"from your package manager (e.g. apk upgrade {item.Package} or apt upgrade {item.Package}).";
             }
             else
             {
-                vuln.Batch = osvResult.RawPatch;
+                item.Patch = osvResult.RawPatch;
             }
         }
 
