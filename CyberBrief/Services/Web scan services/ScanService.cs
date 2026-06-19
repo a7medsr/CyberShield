@@ -26,15 +26,15 @@ namespace CyberBrief.Services.Web_scan_services
             var existing = await _db.ScanRecords
                 .FirstOrDefaultAsync(s => s.Target == target);
 
-            // Already completed with PDF → fully cached, nothing to do
+            // Already completed with PDF -> fully cached, nothing to do
             if (existing is not null && existing.Status == "completed" && existing.PdfReport != null)
                 return (true, existing.ScanId);
 
-            // Already in progress → don't start another one
+            // Already in progress -> don't start another one
             if (existing is not null)
                 return (false, existing.ScanId);
 
-            // Never seen this target → start fresh
+            // Never seen this target -> start fresh
             var body = new StringContent(
                 JsonSerializer.Serialize(new
                 {
@@ -77,16 +77,39 @@ namespace CyberBrief.Services.Web_scan_services
             if (record is null)
                 throw new KeyNotFoundException($"No scan found for target: {target}");
 
-            var response = await _httpClient.GetAsync($"{BaseUrl}/results/{record.ScanId}");
-            response.EnsureSuccessStatusCode();
+            // Local state is the source of truth: if the PDF is already stored
+            // (or we already marked it completed), the scan is finished. Don't
+            // ask the third-party scanner again -- it may be down or report a
+            // stale "running" and overwrite our completed state.
+            if (record.PdfReport is not null || record.Status == "completed")
+            {
+                if (record.Status != "completed")
+                {
+                    record.Status = "completed";
+                    await _db.SaveChangesAsync();
+                }
+                return (record.ScanId, target, "completed");
+            }
 
-            var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            var status = json.RootElement.GetProperty("status").GetString()!;
+            try
+            {
+                var response = await _httpClient.GetAsync($"{BaseUrl}/results/{record.ScanId}");
+                response.EnsureSuccessStatusCode();
 
-            record.Status = status;
-            await _db.SaveChangesAsync();
+                var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var status = json.RootElement.GetProperty("status").GetString()!;
 
-            return (record.ScanId, target, status);
+                record.Status = status;
+                await _db.SaveChangesAsync();
+
+                return (record.ScanId, target, status);
+            }
+            catch (HttpRequestException)
+            {
+                // Scanner unreachable -> return the last known status instead of
+                // throwing a 500, so the client can keep polling / retry later.
+                return (record.ScanId, target, record.Status);
+            }
         }
 
         public async Task<byte[]> GetReportPdfAsync(string target)
@@ -96,7 +119,7 @@ namespace CyberBrief.Services.Web_scan_services
             if (record is null)
                 throw new KeyNotFoundException($"No scan found for target: {target}");
 
-            // Already cached → serve from DB
+            // Already cached -> serve from DB
             if (record.PdfReport is not null)
                 return record.PdfReport;
 
@@ -107,6 +130,7 @@ namespace CyberBrief.Services.Web_scan_services
             var pdf = await response.Content.ReadAsByteArrayAsync();
 
             record.PdfReport = pdf;
+            record.Status = "completed";   // PDF exists -> scan is done
             await _db.SaveChangesAsync();
 
             return pdf;

@@ -11,7 +11,7 @@ namespace CyberBrief.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]                              // ← all endpoints require login
+    [Authorize]                            
     public class WebScanController : ControllerBase
     {
         private readonly IScanService _scanService;
@@ -92,11 +92,14 @@ namespace CyberBrief.Controllers
 
             if (!record.Users.Any(u => u.Id == userId))
                 return Forbid();
+            if (record.PdfReport == null)
+            {
 
-            var (_, _, status) = await _scanService.CheckStatusAsync(target);
+                var (_, _, status) = await _scanService.CheckStatusAsync(target);
 
-            if (status != "completed")
-                return BadRequest(new { error = "Scan not completed yet.", status });
+                if (status != "completed")
+                    return BadRequest(new { error = "Scan not completed yet.", status });
+            }
 
             var pdf = await _scanService.GetReportPdfAsync(target);
             return File(pdf, "application/pdf", $"report_{target}.pdf");

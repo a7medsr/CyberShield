@@ -159,6 +159,33 @@ namespace CyberBrief
 
             var app = builder.Build();
 
+            // Global exception handler — make sure error responses still carry the
+            // CORS header. An unhandled exception clears the response (dropping the
+            // CORS header set by UseCors), so the browser blocks the 500 and the
+            // frontend only sees a generic "Failed to fetch". Re-adding the header
+            // here lets the client read the real error/status code.
+            app.Use(async (context, next) =>
+            {
+                try
+                {
+                    await next();
+                }
+                catch (Exception ex)
+                {
+                    if (!context.Response.HasStarted)
+                    {
+                        context.Response.Clear();
+                        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                        context.Response.Headers["Access-Control-Allow-Origin"] = "*";
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            error = "Internal server error",
+                            detail = ex.Message
+                        });
+                    }
+                }
+            });
+
             app.UseSwagger(opt => opt.RouteTemplate = "openapi/{documentName}.json");
             app.MapScalarApiReference(opt =>
             {
