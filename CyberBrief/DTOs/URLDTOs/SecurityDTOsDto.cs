@@ -77,34 +77,47 @@ namespace CyberBrief.Models
         [JsonPropertyName("url")]
         public string Url { get; set; } = string.Empty;
 
-        [JsonPropertyName("verdict")]
+        // The model now returns "label" instead of "verdict"
+        // (vocabulary: benign | phishing | malware | defacement).
+        [JsonPropertyName("label")]
         public string Verdict { get; set; } = string.Empty;
 
         [JsonPropertyName("confidence")]
         public double Confidence { get; set; }
 
-        [JsonPropertyName("layer")]
-        public string Layer { get; set; } = string.Empty;
-
         [JsonPropertyName("probabilities")]
         public UrlPredictionProbabilities Probabilities { get; set; } = new();
 
-        [JsonPropertyName("flags")]
-        public List<string> Flags { get; set; } = new();
+        [JsonPropertyName("is_malicious")]
+        public bool IsMalicious { get; set; }
 
-        [JsonPropertyName("latency_ms")]
-        public double LatencyMs { get; set; }
+        // Replaces the old "layer" field.
+        [JsonPropertyName("source")]
+        public string Source { get; set; } = string.Empty;
+
+        // Replaces the old "latency_ms" field.
+        [JsonPropertyName("response_time_ms")]
+        public double ResponseTimeMs { get; set; }
+
+        // The model no longer returns per-prediction flags. Kept (and ignored
+        // during deserialization) so existing consumers still get an empty list
+        // instead of null.
+        [JsonIgnore]
+        public List<string> Flags { get; set; } = new();
     }
 
     public class UrlPredictionProbabilities
     {
+        [JsonPropertyName("benign")]
+        public double Benign { get; set; }
+
+        [JsonPropertyName("defacement")]
+        public double Defacement { get; set; }
+
         [JsonPropertyName("malware")]
         public double Malware { get; set; }
 
         [JsonPropertyName("phishing")]
         public double Phishing { get; set; }
-
-        [JsonPropertyName("safe")]
-        public double Safe { get; set; }
     }
 }

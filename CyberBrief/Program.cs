@@ -125,7 +125,7 @@ namespace CyberBrief
                 var httpClient = sp.GetRequiredService<IHttpClientFactory>()
                                    .CreateClient(nameof(BreachDirectoryService));
                 var context = sp.GetRequiredService<CyberBriefDbContext>();
-                var apiKey = "cd849227fcmsha0865829942a226p196270jsnd1890868e127";
+                var apiKey = "f88429ea77msh74b0b44799923fap128a18jsn89005182439";
                 return new BreachDirectoryService(httpClient, apiKey, context);
             });
 
@@ -147,7 +147,7 @@ namespace CyberBrief
             #region Infrastructure
             builder.Services.AddHttpClient("ContainerScanner", client =>
             {
-                client.BaseAddress = new Uri("https://containerscanner.tecisfun.cloud/");
+                client.BaseAddress = new Uri("http://98.66.188.132:3000/");
                 client.Timeout = TimeSpan.FromMinutes(2);
                 client.DefaultRequestHeaders.UserAgent.ParseAdd("CyberBrief-App/1.0");
             });

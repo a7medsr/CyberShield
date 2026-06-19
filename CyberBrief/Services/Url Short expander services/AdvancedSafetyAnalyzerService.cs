@@ -1,4 +1,4 @@
-﻿using CyberBrief.Models;
+using CyberBrief.Models;
 using CyberBrief.Dtos.URLModels;
 using CyberBrief.Services.IServices;
 using System.Text.Json;
@@ -10,7 +10,7 @@ namespace CyberBrief.Services
     {
         private readonly HttpClient _httpClient;
         private readonly IConfiguration _configuration;
-        private const string ModelBaseUrl = "http://147.93.55.224:7000";
+        private const string ModelBaseUrl = "http://147.93.55.224:8001";
 
         public AdvancedSafetyAnalyzerService(HttpClient httpClient, IConfiguration configuration)
         {
@@ -267,7 +267,7 @@ namespace CyberBrief.Services
                     JsonSerializer.Serialize(new { url }),
                     Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync($"{ModelBaseUrl}/analyze", body);
+                var response = await _httpClient.PostAsync($"{ModelBaseUrl}/predict", body);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -286,17 +286,22 @@ namespace CyberBrief.Services
                     return;
                 }
 
-                result.ModelVerdict = prediction.Verdict;
+                var verdict = prediction.Verdict.Equals("benign", StringComparison.OrdinalIgnoreCase)
+                    ? "safe"
+                    : prediction.Verdict.ToLowerInvariant();
+
+                result.ModelVerdict = verdict;
                 result.ModelConfidence = prediction.Confidence;
                 result.ModelFlags = prediction.Flags;
 
-                switch (prediction.Verdict.ToLower())
+                switch (verdict)
                 {
                     case "phishing":
                     case "malware":
+                    case "defacement":
                         result.MlScore = prediction.Confidence >= 0.70 ? 3 : 2;
                         result.RedFlags.Add(
-                            $"ML model: {prediction.Verdict} detected " +
+                            $"ML model: {verdict} detected " +
                             $"(confidence: {prediction.Confidence:P0}).");
                         foreach (var flag in prediction.Flags)
                             result.RedFlags.Add($"Model flag: {flag}");
